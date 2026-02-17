@@ -1,0 +1,186 @@
+// ============================================
+// OmniReply AI — Multi-Tenant Prisma Schema
+// PostgreSQL (Supabase) with strict TenantID isolation
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ──────────────────────────────────────────
+// TENANT — The core SaaS entity
+// ──────────────────────────────────────────
+model Tenant {
+  id                 String   @id @default(uuid())
+  name               String
+  businessType       String   // Restaurant, Pharmacy, School, etc.
+  subscriptionPlan   String   @default("free") // free, starter, pro, enterprise
+  subscriptionStatus String   @default("active") // active, paused, cancelled
+  dailyMessageLimit  Int      @default(100)
+  aiPauseDuration    Int      @default(30) // minutes to pause AI after manual reply
+  defaultLanguage    String   @default("en") // en, so (Somali)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Relations
+  users            User[]
+  knowledgeBase    KnowledgeEntry[]
+  whatsappSessions WhatsAppSession[]
+  leads            Lead[]
+  messages         MessageLog[]
+  broadcasts       Broadcast[]
+  dailyStats       DailyStat[]
+
+  @@map("tenants")
+}
+
+// ──────────────────────────────────────────
+// USER — Business owners / admins
+// ──────────────────────────────────────────
+model User {
+  id        String   @id @default(uuid())
+  tenantId  String
+  email     String   @unique
+  password  String   // bcrypt hashed
+  name      String
+  role      String   @default("owner") // owner, admin, viewer
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+// ──────────────────────────────────────────
+// WHATSAPP SESSION — One per tenant
+// ──────────────────────────────────────────
+model WhatsAppSession {
+  id          String    @id @default(uuid())
+  tenantId    String    @unique
+  phoneNumber String?
+  status      String    @default("disconnected") // connected, disconnected, authenticating, qr_ready
+  lastActive  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("whatsapp_sessions")
+}
+
+// ──────────────────────────────────────────
+// KNOWLEDGE BASE — Tenant-specific business data
+// ──────────────────────────────────────────
+model KnowledgeEntry {
+  id        String   @id @default(uuid())
+  tenantId  String
+  category  String   // menu, faq, policy, price_list, hours, general
+  title     String
+  content   String   @db.Text
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, category])
+  @@map("knowledge_entries")
+}
+
+// ──────────────────────────────────────────
+// LEAD — Auto-captured customer contacts
+// ──────────────────────────────────────────
+model Lead {
+  id           String   @id @default(uuid())
+  tenantId     String
+  phoneNumber  String
+  name         String?
+  firstContact DateTime @default(now())
+  lastContact  DateTime @default(now())
+  messageCount Int      @default(1)
+  tags         String[] @default([])
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, phoneNumber])
+  @@index([tenantId])
+  @@map("leads")
+}
+
+// ──────────────────────────────────────────
+// MESSAGE LOG — Complete conversation history
+// ──────────────────────────────────────────
+model MessageLog {
+  id          String   @id @default(uuid())
+  tenantId    String
+  direction   String   // inbound, outbound
+  sender      String   // phone number / jid
+  recipient   String   // phone number / jid
+  content     String   @db.Text
+  aiGenerated Boolean  @default(false)
+  language    String?  // detected language code
+  timestamp   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, timestamp])
+  @@index([tenantId, sender])
+  @@map("message_logs")
+}
+
+// ──────────────────────────────────────────
+// BROADCAST — Controlled bulk messaging
+// ──────────────────────────────────────────
+model Broadcast {
+  id          String    @id @default(uuid())
+  tenantId    String
+  message     String    @db.Text
+  recipients  String[]  // phone numbers
+  sentCount   Int       @default(0)
+  failedCount Int       @default(0)
+  status      String    @default("pending") // pending, sending, completed, cancelled
+  scheduledAt DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("broadcasts")
+}
+
+// ──────────────────────────────────────────
+// DAILY STATS — Analytics per tenant per day
+// ──────────────────────────────────────────
+model DailyStat {
+  id              String   @id @default(uuid())
+  tenantId        String
+  date            DateTime @db.Date
+  messagesIn      Int      @default(0)
+  messagesOut     Int      @default(0)
+  aiResponses     Int      @default(0)
+  newLeads        Int      @default(0)
+  manualOverrides Int      @default(0)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, date])
+  @@index([tenantId])
+  @@map("daily_stats")
+}

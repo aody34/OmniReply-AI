@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build output
+dist/
+frontend/.next/
+frontend/out/
+
+# Environment
+.env
+.env.local
+
+# Sessions & data
+sessions/
+
+# Logs
+*.log
+
+# Temp/test files
+test-db.js
+db-proxy.js
+setup-db.js
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
