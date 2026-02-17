@@ -29,12 +29,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await fetch(`${API_BASE}${path}`, {
-        ...options,
-        headers,
-    });
+    let res: Response;
+    try {
+        res = await fetch(`${API_BASE}${path}`, {
+            ...options,
+            headers,
+        });
+    } catch (err) {
+        throw new Error('Cannot connect to server. Please check that the backend is running.');
+    }
 
-    const data = await res.json();
+    let data: any;
+    try {
+        data = await res.json();
+    } catch {
+        throw new Error(`Server returned invalid response (${res.status})`);
+    }
 
     if (!res.ok) {
         throw new Error(data.error || `Request failed (${res.status})`);
