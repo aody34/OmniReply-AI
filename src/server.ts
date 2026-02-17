@@ -20,7 +20,8 @@ import broadcastRoutes from './routes/broadcast';
 import tenantRoutes from './routes/tenant';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
+const HOST = '0.0.0.0';
 
 // ── Middleware ──
 app.use(cors());
@@ -107,7 +108,7 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 });
 
 // ── Start Server ──
-app.listen(PORT, async () => {
+app.listen(PORT, HOST, async () => {
     logger.info(`
 ╔══════════════════════════════════════════════╗
 ║                                              ║
