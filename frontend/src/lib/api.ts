@@ -3,7 +3,11 @@
 // Typed fetch wrappers with JWT management
 // ============================================
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+// In production we use same-origin requests and rely on Next rewrites.
+// In local dev we allow direct backend URL overrides.
+const API_BASE = process.env.NODE_ENV === 'development'
+    ? (process.env.NEXT_PUBLIC_API_URL || '')
+    : '';
 
 function getToken(): string | null {
     if (typeof window === 'undefined') return null;

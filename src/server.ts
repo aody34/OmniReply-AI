@@ -22,6 +22,7 @@ import tenantRoutes from './routes/tenant';
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = '0.0.0.0';
+const ENABLE_WHATSAPP_RECONNECT_ON_BOOT = process.env.ENABLE_WHATSAPP_RECONNECT_ON_BOOT === 'true';
 
 // ── Middleware ──
 app.use(cors({
@@ -143,7 +144,7 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 });
 
 // ── Start Server ──
-app.listen(PORT, HOST, async () => {
+const server = app.listen(PORT, HOST, async () => {
     logger.info(`
 ╔══════════════════════════════════════════════╗
 ║                                              ║
@@ -162,6 +163,11 @@ app.listen(PORT, HOST, async () => {
         return;
     }
 
+    if (!ENABLE_WHATSAPP_RECONNECT_ON_BOOT) {
+        logger.info('Skipping WhatsApp reconnect on startup (set ENABLE_WHATSAPP_RECONNECT_ON_BOOT=true to enable)');
+        return;
+    }
+
     // Reconnect any previously active WhatsApp sessions
     try {
         const { reconnectAllSessions } = await import('./lib/whatsapp/connector');
@@ -169,6 +175,14 @@ app.listen(PORT, HOST, async () => {
     } catch (err) {
         logger.error({ error: err }, 'WhatsApp connector unavailable on startup; skipping session reconnect');
     }
+});
+
+process.on('SIGTERM', () => {
+    logger.warn('SIGTERM received; shutting down HTTP server');
+    server.close(() => {
+        logger.info('HTTP server closed');
+        process.exit(0);
+    });
 });
 
 export default app;
