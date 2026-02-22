@@ -4,11 +4,14 @@
 
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import { connectSession, disconnectSession, getQR } from '../lib/whatsapp/connector';
 import { statusMonitor } from '../lib/whatsapp/status-monitor';
 
 const router = Router();
 router.use(authMiddleware);
+
+async function loadConnector() {
+    return import('../lib/whatsapp/connector');
+}
 
 /**
  * POST /api/whatsapp/connect — Start WhatsApp session
@@ -16,6 +19,7 @@ router.use(authMiddleware);
 router.post('/connect', async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const { connectSession } = await loadConnector();
         await connectSession(tenantId);
         res.json({ message: 'WhatsApp connection initiated', status: statusMonitor.getStatus(tenantId) });
     } catch (err: any) {
@@ -29,6 +33,7 @@ router.post('/connect', async (req: Request, res: Response) => {
 router.post('/disconnect', async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const { disconnectSession } = await loadConnector();
         await disconnectSession(tenantId);
         res.json({ message: 'WhatsApp disconnected' });
     } catch (err: any) {
@@ -48,12 +53,17 @@ router.get('/status', async (req: Request, res: Response) => {
  * GET /api/whatsapp/qr — Get QR code for scanning
  */
 router.get('/qr', async (req: Request, res: Response) => {
-    const tenantId = req.auth!.tenantId;
-    const qr = getQR(tenantId);
-    if (!qr) {
-        return res.status(404).json({ error: 'No QR available. Connect first or QR already scanned.' });
+    try {
+        const tenantId = req.auth!.tenantId;
+        const { getQR } = await loadConnector();
+        const qr = getQR(tenantId);
+        if (!qr) {
+            return res.status(404).json({ error: 'No QR available. Connect first or QR already scanned.' });
+        }
+        res.json({ qr });
+    } catch (err: any) {
+        res.status(500).json({ error: 'Failed to get QR code', details: err.message });
     }
-    res.json({ qr });
 });
 
 export default router;

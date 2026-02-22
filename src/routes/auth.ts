@@ -4,10 +4,10 @@
 
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import supabase from '../lib/db';
+import supabase, { isDbConfigured } from '../lib/db';
 import { signToken, authMiddleware } from '../middleware/auth';
 import logger from '../lib/utils/logger';
-import { v4 as uuid } from 'uuid';
+import { randomUUID } from 'crypto';
 
 const router = Router();
 
@@ -17,6 +17,10 @@ const router = Router();
  */
 router.post('/register', async (req: Request, res: Response) => {
     try {
+        if (!isDbConfigured) {
+            return res.status(503).json({ error: 'Database is not configured on the backend' });
+        }
+
         const { email, password, name, businessName, businessType } = req.body;
 
         if (!email || !password || !name || !businessName) {
@@ -24,11 +28,13 @@ router.post('/register', async (req: Request, res: Response) => {
         }
 
         // Check if email already exists
-        const { data: existing } = await supabase
+        const { data: existing, error: existingError } = await supabase
             .from('User')
             .select('id')
             .eq('email', email)
-            .single();
+            .maybeSingle();
+
+        if (existingError) throw existingError;
 
         if (existing) {
             return res.status(409).json({ error: 'Email already registered' });
@@ -37,7 +43,7 @@ router.post('/register', async (req: Request, res: Response) => {
         const hashedPassword = await bcrypt.hash(password, 12);
 
         // Create tenant
-        const tenantId = uuid();
+        const tenantId = randomUUID();
         const { error: tenantError } = await supabase
             .from('Tenant')
             .insert({
@@ -49,7 +55,7 @@ router.post('/register', async (req: Request, res: Response) => {
         if (tenantError) throw tenantError;
 
         // Create user
-        const userId = uuid();
+        const userId = randomUUID();
         const { error: userError } = await supabase
             .from('User')
             .insert({
@@ -85,6 +91,10 @@ router.post('/register', async (req: Request, res: Response) => {
  */
 router.post('/login', async (req: Request, res: Response) => {
     try {
+        if (!isDbConfigured) {
+            return res.status(503).json({ error: 'Database is not configured on the backend' });
+        }
+
         const { email, password } = req.body;
 
         if (!email || !password) {
@@ -95,9 +105,11 @@ router.post('/login', async (req: Request, res: Response) => {
             .from('User')
             .select('*')
             .eq('email', email)
-            .single();
+            .maybeSingle();
 
-        if (error || !user) {
+        if (error) throw error;
+
+        if (!user) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
@@ -121,6 +133,7 @@ router.post('/login', async (req: Request, res: Response) => {
             user: { id: user.id, email: user.email, name: user.name, role: user.role },
         });
     } catch (err: any) {
+        logger.error({ error: err }, 'Login failed');
         res.status(500).json({ error: 'Login failed' });
     }
 });
@@ -131,11 +144,15 @@ router.post('/login', async (req: Request, res: Response) => {
  */
 router.get('/me', authMiddleware, async (req: Request, res: Response) => {
     try {
+        if (!isDbConfigured) {
+            return res.status(503).json({ error: 'Database is not configured on the backend' });
+        }
+
         const { data: user } = await supabase
             .from('User')
             .select('id, email, name, role, tenantId, createdAt')
             .eq('id', req.auth!.userId)
-            .single();
+            .maybeSingle();
 
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
@@ -149,6 +166,7 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
 
         res.json({ user, tenant });
     } catch (err: any) {
+        logger.error({ error: err }, 'Profile fetch failed');
         res.status(500).json({ error: 'Failed to fetch profile' });
     }
 });

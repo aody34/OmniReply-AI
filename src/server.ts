@@ -9,7 +9,7 @@ dotenv.config();
 import express from 'express';
 import cors from 'cors';
 import logger from './lib/utils/logger';
-import { reconnectAllSessions } from './lib/whatsapp/connector';
+import { isDbConfigured } from './lib/db';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -32,7 +32,7 @@ app.use(cors({
 }));
 
 // Handle preflight OPTIONS explicitly for Express 5
-app.options('{*path}', (req, res) => {
+app.options('/{*path}', (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
@@ -52,9 +52,28 @@ app.use((req, res, next) => {
 // ── Health Check ──
 app.get('/health', (_, res) => {
     res.json({
-        status: 'ok',
+        status: isDbConfigured ? 'ok' : 'degraded',
         service: 'OmniReply AI',
         version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        checks: {
+            dbConfigured: isDbConfigured,
+        },
+    });
+});
+
+// ── Readiness Check ──
+app.get('/ready', (_, res) => {
+    if (!isDbConfigured) {
+        return res.status(503).json({
+            status: 'not_ready',
+            reason: 'SUPABASE_URL or SUPABASE_SERVICE_KEY is missing',
+            timestamp: new Date().toISOString(),
+        });
+    }
+
+    res.json({
+        status: 'ready',
         timestamp: new Date().toISOString(),
     });
 });
@@ -75,6 +94,7 @@ app.get('/', (_, res) => {
         version: '1.0.0',
         endpoints: {
             health: 'GET /health',
+            ready: 'GET /ready',
             auth: {
                 register: 'POST /api/auth/register',
                 login: 'POST /api/auth/login',
@@ -137,11 +157,17 @@ app.listen(PORT, HOST, async () => {
 ╚══════════════════════════════════════════════╝
   `);
 
+    if (!isDbConfigured) {
+        logger.warn('Database env vars missing; auth/data routes will return 503 until configured');
+        return;
+    }
+
     // Reconnect any previously active WhatsApp sessions
     try {
+        const { reconnectAllSessions } = await import('./lib/whatsapp/connector');
         await reconnectAllSessions();
     } catch (err) {
-        logger.error({ error: err }, 'Failed to reconnect sessions on startup');
+        logger.error({ error: err }, 'WhatsApp connector unavailable on startup; skipping session reconnect');
     }
 });
 

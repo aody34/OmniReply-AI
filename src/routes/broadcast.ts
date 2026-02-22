@@ -5,7 +5,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import supabase from '../lib/db';
-import { executeBroadcast } from '../lib/broadcast/broadcaster';
 import logger from '../lib/utils/logger';
 
 const router = Router();
@@ -39,9 +38,14 @@ router.post('/', async (req: Request, res: Response) => {
         logger.info({ tenantId, broadcastId: broadcast.id, recipientCount: recipients.length }, '📢 Broadcast created');
 
         if (!scheduledAt) {
-            executeBroadcast(broadcast.id).catch(err => {
-                logger.error({ error: err, broadcastId: broadcast.id }, 'Broadcast execution failed');
-            });
+            void (async () => {
+                try {
+                    const { executeBroadcast } = await import('../lib/broadcast/broadcaster');
+                    await executeBroadcast(broadcast.id);
+                } catch (err) {
+                    logger.error({ error: err, broadcastId: broadcast.id }, 'Broadcast execution failed');
+                }
+            })();
         }
 
         res.status(201).json({
