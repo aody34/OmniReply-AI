@@ -11,6 +11,47 @@ import { randomUUID } from 'crypto';
 
 const router = Router();
 
+type AuthTables = {
+    userTable: string;
+    tenantTable: string;
+};
+
+const AUTH_TABLE_CANDIDATES: AuthTables[] = [
+    { userTable: 'User', tenantTable: 'Tenant' },
+    { userTable: 'users', tenantTable: 'tenants' },
+];
+
+let resolvedAuthTables: AuthTables | null = null;
+
+function isMissingRelationError(error: any): boolean {
+    const message = String(error?.message || '');
+    return error?.code === '42P01' || /relation .* does not exist/i.test(message);
+}
+
+async function getAuthTables(): Promise<AuthTables> {
+    if (resolvedAuthTables) return resolvedAuthTables;
+
+    for (const candidate of AUTH_TABLE_CANDIDATES) {
+        const { error } = await supabase.from(candidate.userTable).select('id').limit(1);
+
+        if (!error) {
+            resolvedAuthTables = candidate;
+            logger.info(candidate, 'Resolved auth table mapping');
+            return candidate;
+        }
+
+        if (!isMissingRelationError(error)) {
+            resolvedAuthTables = candidate;
+            logger.warn({ candidate, error }, 'Using auth table mapping despite probe error');
+            return candidate;
+        }
+    }
+
+    resolvedAuthTables = AUTH_TABLE_CANDIDATES[0];
+    logger.warn(resolvedAuthTables, 'Falling back to default auth table mapping');
+    return resolvedAuthTables;
+}
+
 /**
  * POST /api/auth/register
  * Register a new business (creates tenant + owner)
@@ -20,6 +61,7 @@ router.post('/register', async (req: Request, res: Response) => {
         if (!isDbConfigured) {
             return res.status(503).json({ error: 'Database is not configured on the backend' });
         }
+        const { userTable, tenantTable } = await getAuthTables();
 
         const { email, password, name, businessName, businessType } = req.body;
 
@@ -29,7 +71,7 @@ router.post('/register', async (req: Request, res: Response) => {
 
         // Check if email already exists
         const { data: existing, error: existingError } = await supabase
-            .from('User')
+            .from(userTable)
             .select('id')
             .eq('email', email)
             .maybeSingle();
@@ -45,7 +87,7 @@ router.post('/register', async (req: Request, res: Response) => {
         // Create tenant
         const tenantId = randomUUID();
         const { error: tenantError } = await supabase
-            .from('Tenant')
+            .from(tenantTable)
             .insert({
                 id: tenantId,
                 name: businessName,
@@ -57,7 +99,7 @@ router.post('/register', async (req: Request, res: Response) => {
         // Create user
         const userId = randomUUID();
         const { error: userError } = await supabase
-            .from('User')
+            .from(userTable)
             .insert({
                 id: userId,
                 tenantId,
@@ -94,6 +136,7 @@ router.post('/login', async (req: Request, res: Response) => {
         if (!isDbConfigured) {
             return res.status(503).json({ error: 'Database is not configured on the backend' });
         }
+        const { userTable } = await getAuthTables();
 
         const { email, password } = req.body;
 
@@ -102,7 +145,7 @@ router.post('/login', async (req: Request, res: Response) => {
         }
 
         const { data: user, error } = await supabase
-            .from('User')
+            .from(userTable)
             .select('*')
             .eq('email', email)
             .maybeSingle();
@@ -147,9 +190,10 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
         if (!isDbConfigured) {
             return res.status(503).json({ error: 'Database is not configured on the backend' });
         }
+        const { userTable, tenantTable } = await getAuthTables();
 
         const { data: user } = await supabase
-            .from('User')
+            .from(userTable)
             .select('id, email, name, role, tenantId, createdAt')
             .eq('id', req.auth!.userId)
             .maybeSingle();
@@ -159,7 +203,7 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
         }
 
         const { data: tenant } = await supabase
-            .from('Tenant')
+            .from(tenantTable)
             .select('*')
             .eq('id', req.auth!.tenantId)
             .single();
