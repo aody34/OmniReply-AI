@@ -3,11 +3,18 @@
 // Typed fetch wrappers with JWT management
 // ============================================
 
-// In production we use same-origin requests and rely on Next rewrites.
-// In local dev we allow direct backend URL overrides.
-const API_BASE = process.env.NODE_ENV === 'development'
-    ? (process.env.NEXT_PUBLIC_API_URL || '')
-    : '';
+function normalizeApiBase(raw: string | undefined): string {
+    if (!raw) return '';
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+
+    const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    return withProtocol.endsWith('/') ? withProtocol.slice(0, -1) : withProtocol;
+}
+
+// If NEXT_PUBLIC_API_URL is set, call backend directly.
+// Otherwise use same-origin (/api/*), which works with Vercel rewrites.
+const API_BASE = normalizeApiBase(process.env.NEXT_PUBLIC_API_URL);
 
 function getToken(): string | null {
     if (typeof window === 'undefined') return null;
@@ -40,18 +47,30 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
             headers,
         });
     } catch (err) {
-        throw new Error('Cannot connect to server. Please check that the backend is running.');
+        throw new Error('Cannot connect to server. Please check that the backend URL is correct and running.');
     }
 
     let data: any;
     try {
         data = await res.json();
     } catch {
+        if (res.status === 502) {
+            throw new Error('Backend is unreachable (502). Check Railway deployment and service health.');
+        }
         throw new Error(`Server returned invalid response (${res.status})`);
     }
 
     if (!res.ok) {
-        throw new Error(data.error || `Request failed (${res.status})`);
+        const errorMessage =
+            (typeof data?.error === 'string' && data.error) ||
+            (typeof data?.message === 'string' && data.message) ||
+            '';
+
+        if (res.status === 502) {
+            throw new Error(errorMessage || 'Backend is unreachable (502). Check Railway deployment and service health.');
+        }
+
+        throw new Error(errorMessage || `Request failed (${res.status})`);
     }
 
     return data as T;

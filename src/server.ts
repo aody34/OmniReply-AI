@@ -20,7 +20,15 @@ import broadcastRoutes from './routes/broadcast';
 import tenantRoutes from './routes/tenant';
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3000', 10);
+const portCandidates = [
+    process.env.RAILWAY_TCP_PROXY_PORT,
+    process.env.RAILWAY_PRIVATE_PORT,
+    process.env.PORT,
+    process.env.HTTP_PORT,
+].filter((value): value is string => Boolean(value && value.trim()));
+const rawPort = portCandidates[0] || '3000';
+const parsedPort = Number.parseInt(rawPort, 10);
+const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
 const HOST = '0.0.0.0';
 const ENABLE_WHATSAPP_RECONNECT_ON_BOOT = process.env.ENABLE_WHATSAPP_RECONNECT_ON_BOOT === 'true';
 
@@ -145,6 +153,12 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 
 // ── Start Server ──
 const server = app.listen(PORT, HOST, async () => {
+    logger.info({
+        host: HOST,
+        port: PORT,
+        rawPort,
+    }, 'HTTP server listening');
+
     logger.info(`
 ╔══════════════════════════════════════════════╗
 ║                                              ║
@@ -177,12 +191,34 @@ const server = app.listen(PORT, HOST, async () => {
     }
 });
 
+server.on('error', (err: NodeJS.ErrnoException & { address?: string; port?: number }) => {
+    logger.error({
+        code: err.code,
+        errno: err.errno,
+        syscall: err.syscall,
+        address: err.address,
+        port: err.port,
+        message: err.message,
+    }, 'HTTP server failed to bind');
+    process.exit(1);
+});
+
 process.on('SIGTERM', () => {
     logger.warn('SIGTERM received; shutting down HTTP server');
     server.close(() => {
         logger.info('HTTP server closed');
         process.exit(0);
     });
+});
+
+process.on('uncaughtException', (err) => {
+    logger.fatal({ error: err, message: err.message, stack: err.stack }, 'Uncaught exception');
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+    logger.fatal({ reason }, 'Unhandled promise rejection');
+    process.exit(1);
 });
 
 export default app;
