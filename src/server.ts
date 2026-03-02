@@ -20,15 +20,7 @@ import broadcastRoutes from './routes/broadcast';
 import tenantRoutes from './routes/tenant';
 
 const app = express();
-const portCandidates = [
-    process.env.RAILWAY_TCP_PROXY_PORT,
-    process.env.RAILWAY_PRIVATE_PORT,
-    process.env.PORT,
-    process.env.HTTP_PORT,
-].filter((value): value is string => Boolean(value && value.trim()));
-const rawPort = portCandidates[0] || '3000';
-const parsedPort = Number.parseInt(rawPort, 10);
-const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
+const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 const ENABLE_WHATSAPP_RECONNECT_ON_BOOT = process.env.ENABLE_WHATSAPP_RECONNECT_ON_BOOT === 'true';
 
@@ -152,11 +144,12 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 });
 
 // ── Start Server ──
+console.log('ENV PORT =', process.env.PORT);
 const server = app.listen(PORT, HOST, async () => {
+    console.log('Listening on', HOST, PORT);
     logger.info({
         host: HOST,
         port: PORT,
-        rawPort,
     }, 'HTTP server listening');
 
     logger.info(`
