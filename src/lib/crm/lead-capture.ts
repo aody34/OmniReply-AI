@@ -34,7 +34,8 @@ export async function captureLeadFromMessage(
                     lastContact: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                 })
-                .eq('id', existing.id);
+                .eq('id', existing.id)
+                .eq('tenantId', tenantId);
         } else {
             // Create new lead
             const name = extractNameFromMessage(message);
@@ -61,7 +62,8 @@ export async function captureLeadFromMessage(
                 await supabase
                     .from('DailyStat')
                     .update({ newLeads: (stat.newLeads || 0) + 1 })
-                    .eq('id', stat.id);
+                    .eq('id', stat.id)
+                    .eq('tenantId', tenantId);
             }
 
             logger.info({ tenantId, phone: cleanPhone, name }, '📇 New lead captured');

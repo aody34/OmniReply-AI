@@ -68,6 +68,9 @@ router.post('/register', async (req: Request, res: Response) => {
         if (!email || !password || !name || !businessName) {
             return res.status(400).json({ error: 'email, password, name, and businessName are required' });
         }
+        if (typeof password !== 'string' || password.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters long' });
+        }
 
         // Check if email already exists
         const { data: existing, error: existingError } = await supabase
@@ -196,6 +199,7 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
             .from(userTable)
             .select('id, email, name, role, tenantId, createdAt')
             .eq('id', req.auth!.userId)
+            .eq('tenantId', req.auth!.tenantId)
             .maybeSingle();
 
         if (!user) {

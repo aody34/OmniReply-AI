@@ -3,7 +3,7 @@
 // ============================================
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, requireRole } from '../middleware/auth';
 import supabase from '../lib/db';
 import logger from '../lib/utils/logger';
 
@@ -13,7 +13,7 @@ router.use(authMiddleware);
 /**
  * POST /api/broadcast — Create broadcast
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
         const { message, recipients, scheduledAt } = req.body;

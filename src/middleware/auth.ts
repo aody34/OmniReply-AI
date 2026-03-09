@@ -6,7 +6,13 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import logger from '../lib/utils/logger';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'omnireply-dev-secret';
+const rawJwtSecret = process.env.JWT_SECRET;
+
+if (process.env.NODE_ENV === 'production' && !rawJwtSecret) {
+    throw new Error('JWT_SECRET must be configured in production');
+}
+
+const JWT_SECRET = rawJwtSecret || 'omnireply-dev-secret';
 
 export interface AuthPayload {
     userId: string;
@@ -20,16 +26,37 @@ declare global {
     namespace Express {
         interface Request {
             auth?: AuthPayload;
+            user?: AuthPayload;
         }
     }
+}
+
+function isValidAuthPayload(payload: unknown): payload is AuthPayload {
+    if (!payload || typeof payload !== 'object') return false;
+    const candidate = payload as Partial<AuthPayload>;
+    return Boolean(
+        typeof candidate.userId === 'string' &&
+        candidate.userId &&
+        typeof candidate.tenantId === 'string' &&
+        candidate.tenantId &&
+        typeof candidate.email === 'string' &&
+        candidate.email &&
+        typeof candidate.role === 'string' &&
+        candidate.role,
+    );
 }
 
 /**
  * Sign a JWT token
  */
 export function signToken(payload: AuthPayload): string {
+    if (!isValidAuthPayload(payload)) {
+        throw new Error('Cannot sign JWT with invalid auth payload');
+    }
+
     return jwt.sign(payload as object, JWT_SECRET, {
         expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+        algorithm: 'HS256',
     } as jwt.SignOptions);
 }
 
@@ -37,7 +64,15 @@ export function signToken(payload: AuthPayload): string {
  * Verify and decode a JWT token
  */
 export function verifyToken(token: string): AuthPayload {
-    return jwt.verify(token, JWT_SECRET) as AuthPayload;
+    const decoded = jwt.verify(token, JWT_SECRET, {
+        algorithms: ['HS256'],
+    });
+
+    if (!isValidAuthPayload(decoded)) {
+        throw new Error('Invalid JWT payload');
+    }
+
+    return decoded;
 }
 
 /**
@@ -56,6 +91,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     try {
         const payload = verifyToken(token);
         req.auth = payload;
+        req.user = payload;
         next();
     } catch (err) {
         logger.warn({ error: err }, 'Invalid JWT token');

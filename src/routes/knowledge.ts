@@ -3,7 +3,7 @@
 // ============================================
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, requireRole } from '../middleware/auth';
 import supabase from '../lib/db';
 import logger from '../lib/utils/logger';
 
@@ -38,7 +38,7 @@ router.get('/', async (req: Request, res: Response) => {
 /**
  * POST /api/knowledge — Create entry
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
         const { category, title, content } = req.body;
@@ -72,7 +72,7 @@ router.post('/', async (req: Request, res: Response) => {
 /**
  * PUT /api/knowledge/:id — Update entry
  */
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
         const id = req.params.id as string;
@@ -101,6 +101,7 @@ router.put('/:id', async (req: Request, res: Response) => {
             .from('KnowledgeEntry')
             .update(updateData)
             .eq('id', id)
+            .eq('tenantId', tenantId)
             .select()
             .single();
 
@@ -114,7 +115,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 /**
  * DELETE /api/knowledge/:id — Delete entry
  */
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
         const id = req.params.id as string;
@@ -130,7 +131,11 @@ router.delete('/:id', async (req: Request, res: Response) => {
             return res.status(404).json({ error: 'Knowledge entry not found' });
         }
 
-        const { error } = await supabase.from('KnowledgeEntry').delete().eq('id', id);
+        const { error } = await supabase
+            .from('KnowledgeEntry')
+            .delete()
+            .eq('id', id)
+            .eq('tenantId', tenantId);
         if (error) throw error;
 
         res.json({ message: 'Knowledge entry deleted' });

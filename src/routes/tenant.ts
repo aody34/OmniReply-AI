@@ -3,7 +3,7 @@
 // ============================================
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, requireRole } from '../middleware/auth';
 import supabase from '../lib/db';
 import { statusMonitor } from '../lib/whatsapp/status-monitor';
 
@@ -34,7 +34,7 @@ router.get('/settings', async (req: Request, res: Response) => {
 /**
  * PUT /api/tenant/settings — Update tenant settings
  */
-router.put('/settings', async (req: Request, res: Response) => {
+router.put('/settings', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const { name, businessType, aiPersonality, maxDailyMessages } = req.body;
 

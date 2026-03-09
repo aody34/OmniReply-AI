@@ -136,7 +136,8 @@ async function upsertDailyStat(
         await supabase
             .from('DailyStat')
             .update(update)
-            .eq('id', existing.id);
+            .eq('id', existing.id)
+            .eq('tenantId', tenantId);
     } else {
         // Create new daily stat
         await supabase.from('DailyStat').insert({

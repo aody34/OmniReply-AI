@@ -31,13 +31,18 @@ export async function executeBroadcast(broadcastId: string): Promise<void> {
         await supabase
             .from('Broadcast')
             .update({ status: 'failed' })
-            .eq('id', broadcastId);
+            .eq('id', broadcastId)
+            .eq('tenantId', tenantId);
         logger.error({ tenantId, broadcastId }, 'No active WhatsApp session for broadcast');
         return;
     }
 
     // Update status to 'sending'
-    await supabase.from('Broadcast').update({ status: 'sending' }).eq('id', broadcastId);
+    await supabase
+        .from('Broadcast')
+        .update({ status: 'sending' })
+        .eq('id', broadcastId)
+        .eq('tenantId', tenantId);
 
     let sentCount = 0;
     let failedCount = 0;
@@ -87,7 +92,8 @@ export async function executeBroadcast(broadcastId: string): Promise<void> {
             status: 'completed',
             completedAt: new Date().toISOString(),
         })
-        .eq('id', broadcastId);
+        .eq('id', broadcastId)
+        .eq('tenantId', tenantId);
 
     // Update daily stats
     const today = new Date().toISOString().split('T')[0];
@@ -105,7 +111,8 @@ export async function executeBroadcast(broadcastId: string): Promise<void> {
                 messagesOut: (stat.messagesOut || 0) + sentCount,
                 broadcastsSent: (stat.broadcastsSent || 0) + sentCount,
             })
-            .eq('id', stat.id);
+            .eq('id', stat.id)
+            .eq('tenantId', tenantId);
     }
 
     logger.info({ tenantId, broadcastId, sentCount, failedCount }, '📢 Broadcast completed');

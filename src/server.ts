@@ -11,8 +11,10 @@ if (process.env.NODE_ENV !== 'production') {
 
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import logger from './lib/utils/logger';
 import { isDbConfigured } from './lib/db';
+import { createAuthRateLimiter } from './middleware/rate-limit';
 
 // Import routes
 import authRoutes from './routes/auth';
@@ -26,26 +28,68 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 const ENABLE_WHATSAPP_RECONNECT_ON_BOOT = process.env.ENABLE_WHATSAPP_RECONNECT_ON_BOOT === 'true';
+const BODY_LIMIT = process.env.BODY_LIMIT || '1mb';
 
-// ── Middleware ──
-app.use(cors({
-    origin: true,
+function parseAllowedOrigins(raw: string | undefined): string[] {
+    if (!raw) return [];
+    return raw
+        .split(',')
+        .map(origin => origin.trim())
+        .filter(Boolean);
+}
+
+const configuredCorsOrigins = parseAllowedOrigins(process.env.CORS_ALLOWED_ORIGINS);
+const fallbackCorsOrigins = parseAllowedOrigins(process.env.FRONTEND_URL);
+const allowedCorsOrigins = configuredCorsOrigins.length > 0
+    ? configuredCorsOrigins
+    : (process.env.NODE_ENV === 'production'
+        ? fallbackCorsOrigins
+        : ['http://localhost:3000', 'http://127.0.0.1:3000']);
+
+if (process.env.NODE_ENV === 'production' && allowedCorsOrigins.length === 0) {
+    logger.warn('No CORS allowed origins configured for production; browser cross-origin requests will be blocked');
+}
+
+const corsOptions: cors.CorsOptions = {
+    origin(origin, callback) {
+        // Allow non-browser clients and same-origin server requests.
+        if (!origin) return callback(null, true);
+        if (allowedCorsOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error('CORS origin not allowed'));
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
-}));
+};
 
-// Handle preflight OPTIONS explicitly for Express 5
-app.options('/{*path}', (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.sendStatus(204);
+const authRateLimiter = createAuthRateLimiter();
+
+function parseTrustProxy(raw: string | undefined): boolean | number | string {
+    if (!raw) return process.env.NODE_ENV === 'production' ? 1 : false;
+    if (raw === 'true') return 1;
+    if (raw === 'false') return false;
+    const asNumber = Number(raw);
+    if (Number.isFinite(asNumber)) return asNumber;
+    return raw;
+}
+
+app.disable('x-powered-by');
+app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
+
+// ── Middleware ──
+app.use(helmet());
+app.use(cors(corsOptions));
+app.options('/{*path}', cors(corsOptions));
+app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err.message === 'CORS origin not allowed') {
+        return res.status(403).json({ error: 'Origin not allowed by CORS policy' });
+    }
+    return next(err);
 });
-
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
+app.use('/api/auth/login', authRateLimiter);
+app.use('/api/auth/register', authRateLimiter);
 
 // ── Request logging ──
 app.use((req, res, next) => {
