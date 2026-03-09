@@ -4,10 +4,11 @@
 
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import supabase from '../lib/db';
+import { requestDbMiddleware } from '../middleware/request-db';
 
 const router = Router();
 router.use(authMiddleware);
+router.use(requestDbMiddleware);
 
 /**
  * GET /api/leads — List leads with optional search
@@ -15,13 +16,14 @@ router.use(authMiddleware);
 router.get('/', async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
         const search = req.query.search as string | undefined;
         const page = parseInt(req.query.page as string) || 1;
         const limit = parseInt(req.query.limit as string) || 20;
         const from = (page - 1) * limit;
         const to = from + limit - 1;
 
-        let query = supabase
+        let query = db
             .from('Lead')
             .select('*', { count: 'exact' })
             .eq('tenantId', tenantId)

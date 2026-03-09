@@ -4,18 +4,22 @@
 
 import { Router, Request, Response } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth';
-import supabase from '../lib/db';
+import { requestDbMiddleware } from '../middleware/request-db';
+import { assertNoTenantOverride, TenantOverrideError } from '../lib/request-db';
 import { statusMonitor } from '../lib/whatsapp/status-monitor';
 
 const router = Router();
 router.use(authMiddleware);
+router.use(requestDbMiddleware);
 
 /**
  * GET /api/tenant/settings — Get tenant settings
  */
 router.get('/settings', async (req: Request, res: Response) => {
     try {
-        const { data: tenant, error } = await supabase
+        const db = req.tenantDb!;
+
+        const { data: tenant, error } = await db
             .from('Tenant')
             .select('*')
             .eq('id', req.auth!.tenantId)
@@ -36,6 +40,8 @@ router.get('/settings', async (req: Request, res: Response) => {
  */
 router.put('/settings', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
+        const db = req.tenantDb!;
+        assertNoTenantOverride(req.body);
         const { name, businessType, aiPersonality, maxDailyMessages } = req.body;
 
         const updateData: any = { updatedAt: new Date().toISOString() };
@@ -44,7 +50,7 @@ router.put('/settings', requireRole('owner', 'admin'), async (req: Request, res:
         if (aiPersonality) updateData.aiPersonality = aiPersonality;
         if (maxDailyMessages) updateData.maxDailyMessages = maxDailyMessages;
 
-        const { data: tenant, error } = await supabase
+        const { data: tenant, error } = await db
             .from('Tenant')
             .update(updateData)
             .eq('id', req.auth!.tenantId)
@@ -54,6 +60,9 @@ router.put('/settings', requireRole('owner', 'admin'), async (req: Request, res:
         if (error) throw error;
         res.json({ message: 'Settings updated', tenant });
     } catch (err) {
+        if (err instanceof TenantOverrideError) {
+            return res.status(400).json({ error: err.message });
+        }
         res.status(500).json({ error: 'Failed to update settings' });
     }
 });
@@ -64,13 +73,14 @@ router.put('/settings', requireRole('owner', 'admin'), async (req: Request, res:
 router.get('/dashboard', async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
         const today = new Date().toISOString().split('T')[0];
 
         // Parallel queries
         const [tenantRes, statsRes, leadsRes, whatsappStatus] = await Promise.all([
-            supabase.from('Tenant').select('*').eq('id', tenantId).single(),
-            supabase.from('DailyStat').select('*').eq('tenantId', tenantId).eq('date', today).single(),
-            supabase.from('Lead').select('id', { count: 'exact' }).eq('tenantId', tenantId),
+            db.from('Tenant').select('*').eq('id', tenantId).single(),
+            db.from('DailyStat').select('*').eq('tenantId', tenantId).eq('date', today).single(),
+            db.from('Lead').select('id', { count: 'exact' }).eq('tenantId', tenantId),
             Promise.resolve(statusMonitor.getStatus(tenantId)),
         ]);
 
@@ -99,12 +109,13 @@ router.get('/dashboard', async (req: Request, res: Response) => {
 router.get('/analytics', async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
         const days = parseInt(req.query.days as string) || 7;
 
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - days);
 
-        const { data: stats, error } = await supabase
+        const { data: stats, error } = await db
             .from('DailyStat')
             .select('*')
             .eq('tenantId', tenantId)

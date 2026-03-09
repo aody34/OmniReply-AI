@@ -1,49 +1,144 @@
--- OmniReply AI RLS template
--- Apply only if you execute queries with anon/authenticated JWTs that carry a tenantId claim.
--- Service role keys bypass RLS by design.
+-- OmniReply AI
+-- Supabase RLS validation + safe policy upsert
+--
+-- Run this in the Supabase SQL editor after setting up anon/authenticated JWT access.
+-- The policies below scope rows by the custom JWT claim:
+-- current_setting('request.jwt.claims', true)::jsonb ->> 'tenantId'
 
--- Legacy quoted-table schema
-ALTER TABLE IF EXISTS "User" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS "WhatsAppSession" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS "KnowledgeEntry" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS "Lead" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS "MessageLog" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS "Broadcast" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS "DailyStat" ENABLE ROW LEVEL SECURITY;
+-- Validation: confirm row security flags for tenant-owned tables.
+SELECT
+    c.relname AS table_name,
+    c.relrowsecurity AS rowsecurity
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'
+  AND c.relname = ANY (ARRAY[
+      'Tenant',
+      'User',
+      'WhatsAppSession',
+      'MessageLog',
+      'KnowledgeEntry',
+      'Lead',
+      'Broadcast',
+      'DailyStat',
+      'tenants',
+      'users',
+      'whatsapp_sessions',
+      'message_logs',
+      'knowledge_entries',
+      'leads',
+      'broadcasts',
+      'daily_stats'
+  ])
+ORDER BY c.relname;
 
--- Prisma snake_case schema
-ALTER TABLE IF EXISTS users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS whatsapp_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS knowledge_entries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS leads ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS message_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS broadcasts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS daily_stats ENABLE ROW LEVEL SECURITY;
-
--- Shared helper expression:
--- (current_setting('request.jwt.claims', true)::jsonb ->> 'tenantId')
+-- Validation: list active policies and their definitions.
+SELECT
+    schemaname,
+    tablename,
+    policyname,
+    cmd,
+    qual,
+    with_check
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename = ANY (ARRAY[
+      'Tenant',
+      'User',
+      'WhatsAppSession',
+      'MessageLog',
+      'KnowledgeEntry',
+      'Lead',
+      'Broadcast',
+      'DailyStat',
+      'tenants',
+      'users',
+      'whatsapp_sessions',
+      'message_logs',
+      'knowledge_entries',
+      'leads',
+      'broadcasts',
+      'daily_stats'
+  ])
+ORDER BY tablename, policyname;
 
 DO $$
+DECLARE
+    claim_expr CONSTANT text := '(current_setting(''request.jwt.claims'', true)::jsonb ->> ''tenantId'')';
+    table_record RECORD;
+    tenant_expr text;
+    policy_name text;
 BEGIN
-  IF to_regclass('"KnowledgeEntry"') IS NOT NULL THEN
-    CREATE POLICY "KnowledgeEntry tenant isolate"
-      ON "KnowledgeEntry"
-      FOR ALL
-      USING ("tenantId"::text = (current_setting('request.jwt.claims', true)::jsonb ->> 'tenantId'))
-      WITH CHECK ("tenantId"::text = (current_setting('request.jwt.claims', true)::jsonb ->> 'tenantId'));
-  END IF;
+    FOR table_record IN
+        SELECT *
+        FROM (
+            VALUES
+                ('Tenant', true),
+                ('User', false),
+                ('WhatsAppSession', false),
+                ('MessageLog', false),
+                ('KnowledgeEntry', false),
+                ('Lead', false),
+                ('Broadcast', false),
+                ('DailyStat', false),
+                ('tenants', true),
+                ('users', false),
+                ('whatsapp_sessions', false),
+                ('message_logs', false),
+                ('knowledge_entries', false),
+                ('leads', false),
+                ('broadcasts', false),
+                ('daily_stats', false)
+        ) AS candidate(table_name, is_tenant_root)
+    LOOP
+        IF to_regclass(format('public.%I', table_record.table_name)) IS NULL THEN
+            CONTINUE;
+        END IF;
+
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_record.table_name);
+
+        IF table_record.is_tenant_root THEN
+            tenant_expr := format('id::text = %s', claim_expr);
+        ELSIF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = table_record.table_name
+              AND column_name = 'tenantId'
+        ) THEN
+            tenant_expr := format('%I::text = %s', 'tenantId', claim_expr);
+        ELSIF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = table_record.table_name
+              AND column_name = 'tenant_id'
+        ) THEN
+            tenant_expr := format('%I::text = %s', 'tenant_id', claim_expr);
+        ELSE
+            RAISE NOTICE 'Skipping % because no tenant column was found', table_record.table_name;
+            CONTINUE;
+        END IF;
+
+        policy_name := table_record.table_name || ' tenant isolate';
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_policies
+            WHERE schemaname = 'public'
+              AND tablename = table_record.table_name
+              AND policyname = policy_name
+        ) THEN
+            EXECUTE format(
+                'CREATE POLICY %I ON %I FOR ALL USING (%s) WITH CHECK (%s)',
+                policy_name,
+                table_record.table_name,
+                tenant_expr,
+                tenant_expr
+            );
+        END IF;
+    END LOOP;
 END $$;
 
-DO $$
-BEGIN
-  IF to_regclass('knowledge_entries') IS NOT NULL THEN
-    CREATE POLICY "knowledge_entries tenant isolate"
-      ON knowledge_entries
-      FOR ALL
-      USING ("tenantId"::text = (current_setting('request.jwt.claims', true)::jsonb ->> 'tenantId'))
-      WITH CHECK ("tenantId"::text = (current_setting('request.jwt.claims', true)::jsonb ->> 'tenantId'));
-  END IF;
-END $$;
-
--- Repeat this tenant policy pattern for users/leads/broadcasts/message_logs/daily_stats/whatsapp_sessions.
-
+-- Re-run the validation queries above after this block.

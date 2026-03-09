@@ -11,9 +11,10 @@ function matchesFilters(row: Row, filters: Array<{ column: string; value: any }>
     return filters.every(({ column, value }) => row[column] === value);
 }
 
-const supabaseMock = {
+const tenantDbMock = {
     from(table: string) {
         const filters: Array<{ column: string; value: any }> = [];
+        let inserted: Row | null = null;
 
         return {
             select() {
@@ -26,7 +27,17 @@ const supabaseMock = {
             order() {
                 return this;
             },
+            insert(payload: Row) {
+                inserted = { id: payload.id || `row-${Date.now()}`, ...payload };
+                return this;
+            },
             async single() {
+                if (inserted) {
+                    tables[table] = tables[table] || [];
+                    tables[table].push(inserted);
+                    return { data: inserted, error: null };
+                }
+
                 const rows = tables[table] || [];
                 const found = rows.find((row) => matchesFilters(row, filters));
                 if (!found) {
@@ -38,9 +49,12 @@ const supabaseMock = {
     },
 };
 
-vi.mock('../../src/lib/db', () => ({
+vi.mock('../../src/middleware/request-db', () => ({
     __esModule: true,
-    default: supabaseMock,
+    requestDbMiddleware(req: express.Request, _res: express.Response, next: express.NextFunction) {
+        req.tenantDb = tenantDbMock as any;
+        next();
+    },
 }));
 
 vi.mock('../../src/lib/utils/logger', () => ({
@@ -56,6 +70,7 @@ vi.mock('../../src/lib/utils/logger', () => ({
 
 describe('Security: tenant isolation', () => {
     let broadcastRoutes: express.Router;
+    let knowledgeRoutes: express.Router;
     const jwtSecret = 'test-jwt-secret';
 
     beforeAll(async () => {
@@ -63,6 +78,7 @@ describe('Security: tenant isolation', () => {
         process.env.JWT_SECRET = jwtSecret;
         vi.resetModules();
         ({ default: broadcastRoutes } = await import('../../src/routes/broadcast'));
+        ({ default: knowledgeRoutes } = await import('../../src/routes/knowledge'));
     });
 
     beforeEach(() => {
@@ -70,6 +86,7 @@ describe('Security: tenant isolation', () => {
             { id: 'broadcast-tenant-a', tenantId: 'tenant-a', message: 'Hello A', status: 'pending' },
             { id: 'broadcast-tenant-b', tenantId: 'tenant-b', message: 'Hello B', status: 'pending' },
         ];
+        tables.KnowledgeEntry = [];
     });
 
     function buildToken(tenantId: string) {
@@ -89,6 +106,7 @@ describe('Security: tenant isolation', () => {
         const app = express();
         app.use(express.json());
         app.use('/api/broadcast', broadcastRoutes);
+        app.use('/api/knowledge', knowledgeRoutes);
         return app;
     }
 
@@ -105,7 +123,7 @@ describe('Security: tenant isolation', () => {
         expect(res.body.broadcast.tenantId).toBe('tenant-a');
     });
 
-    it('denies cross-tenant access to another tenant record', async () => {
+    it('denies cross-tenant reads to another tenant record', async () => {
         const app = buildApp();
         const token = buildToken('tenant-a');
 
@@ -116,5 +134,23 @@ describe('Security: tenant isolation', () => {
         expect(res.status).toBe(404);
         expect(res.body.error).toBe('Broadcast not found');
     });
-});
 
+    it('rejects tenantId overrides on tenant-owned writes', async () => {
+        const app = buildApp();
+        const token = buildToken('tenant-a');
+
+        const res = await request(app)
+            .post('/api/knowledge')
+            .set('Authorization', `Bearer ${token}`)
+            .send({
+                tenantId: 'tenant-b',
+                category: 'faq',
+                title: 'Unsafe write',
+                content: 'This must be rejected.',
+            });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/tenantId must be derived/i);
+        expect(tables.KnowledgeEntry).toHaveLength(0);
+    });
+});

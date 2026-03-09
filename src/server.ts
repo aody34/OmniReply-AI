@@ -14,10 +14,12 @@ import cors from 'cors';
 import helmet from 'helmet';
 import logger from './lib/utils/logger';
 import { isDbConfigured } from './lib/db';
+import { isRequestDbConfigured } from './lib/request-db';
 import { createAuthRateLimiter } from './middleware/rate-limit';
 
 // Import routes
 import authRoutes from './routes/auth';
+import authProfileRoutes from './routes/auth-profile';
 import whatsappRoutes from './routes/whatsapp';
 import knowledgeRoutes from './routes/knowledge';
 import leadsRoutes from './routes/leads';
@@ -100,12 +102,13 @@ app.use((req, res, next) => {
 // ── Health Check ──
 app.get('/health', (_, res) => {
     res.json({
-        status: isDbConfigured ? 'ok' : 'degraded',
+        status: isDbConfigured && isRequestDbConfigured ? 'ok' : 'degraded',
         service: 'OmniReply AI',
         version: '1.0.0',
         timestamp: new Date().toISOString(),
         checks: {
             dbConfigured: isDbConfigured,
+            requestDbConfigured: isRequestDbConfigured,
         },
     });
 });
@@ -120,6 +123,14 @@ app.get('/ready', (_, res) => {
         });
     }
 
+    if (!isRequestDbConfigured) {
+        return res.status(503).json({
+            status: 'not_ready',
+            reason: 'SUPABASE_ANON_KEY or SUPABASE_JWT_SECRET is missing',
+            timestamp: new Date().toISOString(),
+        });
+    }
+
     res.json({
         status: 'ready',
         timestamp: new Date().toISOString(),
@@ -128,6 +139,7 @@ app.get('/ready', (_, res) => {
 
 // ── API Routes ──
 app.use('/api/auth', authRoutes);
+app.use('/api/auth', authProfileRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/leads', leadsRoutes);
@@ -215,6 +227,10 @@ const server = app.listen(PORT, HOST, async () => {
     if (!isDbConfigured) {
         logger.warn('Database env vars missing; auth/data routes will return 503 until configured');
         return;
+    }
+
+    if (!isRequestDbConfigured) {
+        logger.warn('Tenant-scoped DB env vars missing; protected API routes will return 503 until configured');
     }
 
     if (!ENABLE_WHATSAPP_RECONNECT_ON_BOOT) {

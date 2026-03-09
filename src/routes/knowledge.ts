@@ -4,11 +4,13 @@
 
 import { Router, Request, Response } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth';
-import supabase from '../lib/db';
+import { requestDbMiddleware } from '../middleware/request-db';
+import { assertNoTenantOverride, TenantOverrideError } from '../lib/request-db';
 import logger from '../lib/utils/logger';
 
 const router = Router();
 router.use(authMiddleware);
+router.use(requestDbMiddleware);
 
 /**
  * GET /api/knowledge — List entries
@@ -16,9 +18,10 @@ router.use(authMiddleware);
 router.get('/', async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
         const category = req.query.category as string | undefined;
 
-        let query = supabase
+        let query = db
             .from('KnowledgeEntry')
             .select('*')
             .eq('tenantId', tenantId)
@@ -41,6 +44,8 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
+        assertNoTenantOverride(req.body);
         const { category, title, content } = req.body;
 
         if (!category || !title || !content) {
@@ -54,7 +59,7 @@ router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Respon
             });
         }
 
-        const { data: entry, error } = await supabase
+        const { data: entry, error } = await db
             .from('KnowledgeEntry')
             .insert({ tenantId, category, title, content })
             .select()
@@ -65,6 +70,9 @@ router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Respon
         logger.info({ tenantId, entryId: entry.id, category, title }, '📚 Knowledge entry created');
         res.status(201).json({ message: 'Knowledge entry created', entry });
     } catch (err) {
+        if (err instanceof TenantOverrideError) {
+            return res.status(400).json({ error: err.message });
+        }
         res.status(500).json({ error: 'Failed to create knowledge entry' });
     }
 });
@@ -75,11 +83,13 @@ router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Respon
 router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
+        assertNoTenantOverride(req.body);
         const id = req.params.id as string;
         const { category, title, content, isActive } = req.body;
 
         // Ensure the entry belongs to this tenant
-        const { data: existing } = await supabase
+        const { data: existing } = await db
             .from('KnowledgeEntry')
             .select('id')
             .eq('id', id)
@@ -97,7 +107,7 @@ router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Resp
         if (isActive !== undefined) updateData.isActive = isActive;
         updateData.updatedAt = new Date().toISOString();
 
-        const { data: updated, error } = await supabase
+        const { data: updated, error } = await db
             .from('KnowledgeEntry')
             .update(updateData)
             .eq('id', id)
@@ -108,6 +118,9 @@ router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Resp
         if (error) throw error;
         res.json({ message: 'Knowledge entry updated', entry: updated });
     } catch (err) {
+        if (err instanceof TenantOverrideError) {
+            return res.status(400).json({ error: err.message });
+        }
         res.status(500).json({ error: 'Failed to update knowledge entry' });
     }
 });
@@ -118,9 +131,10 @@ router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Resp
 router.delete('/:id', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
         const id = req.params.id as string;
 
-        const { data: existing } = await supabase
+        const { data: existing } = await db
             .from('KnowledgeEntry')
             .select('id')
             .eq('id', id)
@@ -131,7 +145,7 @@ router.delete('/:id', requireRole('owner', 'admin'), async (req: Request, res: R
             return res.status(404).json({ error: 'Knowledge entry not found' });
         }
 
-        const { error } = await supabase
+        const { error } = await db
             .from('KnowledgeEntry')
             .delete()
             .eq('id', id)

@@ -5,52 +5,12 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import supabase, { isDbConfigured } from '../lib/db';
-import { signToken, authMiddleware } from '../middleware/auth';
+import { signToken } from '../middleware/auth';
+import { resolveAuthTables } from '../lib/auth-tables';
 import logger from '../lib/utils/logger';
 import { randomUUID } from 'crypto';
 
 const router = Router();
-
-type AuthTables = {
-    userTable: string;
-    tenantTable: string;
-};
-
-const AUTH_TABLE_CANDIDATES: AuthTables[] = [
-    { userTable: 'User', tenantTable: 'Tenant' },
-    { userTable: 'users', tenantTable: 'tenants' },
-];
-
-let resolvedAuthTables: AuthTables | null = null;
-
-function isMissingRelationError(error: any): boolean {
-    const message = String(error?.message || '');
-    return error?.code === '42P01' || /relation .* does not exist/i.test(message);
-}
-
-async function getAuthTables(): Promise<AuthTables> {
-    if (resolvedAuthTables) return resolvedAuthTables;
-
-    for (const candidate of AUTH_TABLE_CANDIDATES) {
-        const { error } = await supabase.from(candidate.userTable).select('id').limit(1);
-
-        if (!error) {
-            resolvedAuthTables = candidate;
-            logger.info(candidate, 'Resolved auth table mapping');
-            return candidate;
-        }
-
-        if (!isMissingRelationError(error)) {
-            resolvedAuthTables = candidate;
-            logger.warn({ candidate, error }, 'Using auth table mapping despite probe error');
-            return candidate;
-        }
-    }
-
-    resolvedAuthTables = AUTH_TABLE_CANDIDATES[0];
-    logger.warn(resolvedAuthTables, 'Falling back to default auth table mapping');
-    return resolvedAuthTables;
-}
 
 /**
  * POST /api/auth/register
@@ -61,7 +21,7 @@ router.post('/register', async (req: Request, res: Response) => {
         if (!isDbConfigured) {
             return res.status(503).json({ error: 'Database is not configured on the backend' });
         }
-        const { userTable, tenantTable } = await getAuthTables();
+        const { userTable, tenantTable } = await resolveAuthTables(supabase);
 
         const { email, password, name, businessName, businessType } = req.body;
 
@@ -139,7 +99,7 @@ router.post('/login', async (req: Request, res: Response) => {
         if (!isDbConfigured) {
             return res.status(503).json({ error: 'Database is not configured on the backend' });
         }
-        const { userTable } = await getAuthTables();
+        const { userTable } = await resolveAuthTables(supabase);
 
         const { email, password } = req.body;
 
@@ -181,41 +141,6 @@ router.post('/login', async (req: Request, res: Response) => {
     } catch (err: any) {
         logger.error({ error: err }, 'Login failed');
         res.status(500).json({ error: 'Login failed' });
-    }
-});
-
-/**
- * GET /api/auth/me
- * Get current user profile
- */
-router.get('/me', authMiddleware, async (req: Request, res: Response) => {
-    try {
-        if (!isDbConfigured) {
-            return res.status(503).json({ error: 'Database is not configured on the backend' });
-        }
-        const { userTable, tenantTable } = await getAuthTables();
-
-        const { data: user } = await supabase
-            .from(userTable)
-            .select('id, email, name, role, tenantId, createdAt')
-            .eq('id', req.auth!.userId)
-            .eq('tenantId', req.auth!.tenantId)
-            .maybeSingle();
-
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        const { data: tenant } = await supabase
-            .from(tenantTable)
-            .select('*')
-            .eq('id', req.auth!.tenantId)
-            .single();
-
-        res.json({ user, tenant });
-    } catch (err: any) {
-        logger.error({ error: err }, 'Profile fetch failed');
-        res.status(500).json({ error: 'Failed to fetch profile' });
     }
 });
 

@@ -5,16 +5,15 @@
 
 import makeWASocket, {
     DisconnectReason,
-    useMultiFileAuthState,
     WASocket,
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import * as path from 'path';
 import supabase from '../db';
 import logger from '../utils/logger';
 import { statusMonitor } from './status-monitor';
+import { sessionStore } from './session-store';
 
 // QR code storage
 const qrCodes: Map<string, string> = new Map();
@@ -26,7 +25,6 @@ declare module 'qrcode-terminal' {
 }
 
 const activeSockets: Map<string, WASocket> = new Map();
-const sessionsDir = process.env.SESSIONS_DIR || './sessions';
 
 /**
  * Get the active socket for a tenant
@@ -52,8 +50,7 @@ export async function connectSession(tenantId: string): Promise<void> {
         return;
     }
 
-    const sessionPath = path.join(sessionsDir, tenantId);
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+    const { state, saveCreds } = await sessionStore.getAuthState(tenantId);
     const { version } = await fetchLatestBaileysVersion();
 
     statusMonitor.updateStatus(tenantId, { status: 'connecting' as any });
@@ -64,7 +61,7 @@ export async function connectSession(tenantId: string): Promise<void> {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger as any),
         },
-        printQRInTerminal: true,
+        printQRInTerminal: false,
         logger: logger as any,
         generateHighQualityLinkPreview: false,
         markOnlineOnConnect: true,
@@ -121,6 +118,8 @@ export async function connectSession(tenantId: string): Promise<void> {
 
             if (statusCode === DisconnectReason.loggedOut) {
                 statusMonitor.updateStatus(tenantId, { status: 'disconnected' });
+                qrCodes.delete(tenantId);
+                await sessionStore.deleteSession(tenantId);
                 await supabase
                     .from('WhatsAppSession')
                     .update({ status: 'disconnected', updatedAt: new Date().toISOString() })
@@ -175,7 +174,9 @@ export async function disconnectSession(tenantId: string): Promise<void> {
         await socket.logout();
         activeSockets.delete(tenantId);
     }
+    qrCodes.delete(tenantId);
     statusMonitor.updateStatus(tenantId, { status: 'disconnected' });
+    await sessionStore.deleteSession(tenantId);
 
     await supabase
         .from('WhatsAppSession')

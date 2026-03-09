@@ -4,11 +4,13 @@
 
 import { Router, Request, Response } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth';
-import supabase from '../lib/db';
+import { requestDbMiddleware } from '../middleware/request-db';
+import { assertNoTenantOverride, TenantOverrideError } from '../lib/request-db';
 import logger from '../lib/utils/logger';
 
 const router = Router();
 router.use(authMiddleware);
+router.use(requestDbMiddleware);
 
 /**
  * POST /api/broadcast — Create broadcast
@@ -16,13 +18,15 @@ router.use(authMiddleware);
 router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
+        assertNoTenantOverride(req.body);
         const { message, recipients, scheduledAt } = req.body;
 
         if (!message || !recipients || !Array.isArray(recipients) || recipients.length === 0) {
             return res.status(400).json({ error: 'message and recipients[] are required' });
         }
 
-        const { data: broadcast, error } = await supabase
+        const { data: broadcast, error } = await db
             .from('Broadcast')
             .insert({
                 tenantId,
@@ -57,6 +61,9 @@ router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Respon
             },
         });
     } catch (err) {
+        if (err instanceof TenantOverrideError) {
+            return res.status(400).json({ error: err.message });
+        }
         res.status(500).json({ error: 'Failed to create broadcast' });
     }
 });
@@ -67,8 +74,9 @@ router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Respon
 router.get('/', async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
 
-        const { data: broadcasts, error } = await supabase
+        const { data: broadcasts, error } = await db
             .from('Broadcast')
             .select('id, message, sentCount, failedCount, status, createdAt, completedAt, recipients')
             .eq('tenantId', tenantId)
@@ -95,9 +103,10 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
+        const db = req.tenantDb!;
         const id = req.params.id as string;
 
-        const { data: broadcast, error } = await supabase
+        const { data: broadcast, error } = await db
             .from('Broadcast')
             .select('*')
             .eq('id', id)

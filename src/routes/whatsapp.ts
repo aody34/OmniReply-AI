@@ -4,11 +4,13 @@
 
 import { Router, Request, Response } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth';
+import { createWhatsAppRateLimiter } from '../middleware/rate-limit';
 import { statusMonitor } from '../lib/whatsapp/status-monitor';
 import logger from '../lib/utils/logger';
 
 const router = Router();
 router.use(authMiddleware);
+const whatsappRateLimiter = createWhatsAppRateLimiter();
 
 async function loadConnector() {
     return import('../lib/whatsapp/connector');
@@ -17,7 +19,7 @@ async function loadConnector() {
 /**
  * POST /api/whatsapp/connect — Start WhatsApp session
  */
-router.post('/connect', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
+router.post('/connect', whatsappRateLimiter, requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
         const { connectSession } = await loadConnector();
@@ -32,7 +34,7 @@ router.post('/connect', requireRole('owner', 'admin'), async (req: Request, res:
 /**
  * POST /api/whatsapp/disconnect — Stop WhatsApp session
  */
-router.post('/disconnect', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
+router.post('/disconnect', whatsappRateLimiter, requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
         const { disconnectSession } = await loadConnector();

@@ -11,8 +11,11 @@ Backend + frontend multi-tenant WhatsApp SaaS.
    - `SUPABASE_URL`
    - `SUPABASE_ANON_KEY`
    - `SUPABASE_SERVICE_KEY`
+   - `SUPABASE_JWT_SECRET`
    - `JWT_SECRET`
    - `GEMINI_API_KEY`
+   - `WHATSAPP_SESSION_ENC_KEY`
+   - `WEBHOOK_SECRET`
 3. Optional:
    - `DIRECT_URL` (only if direct host is reachable)
    - `CORS_ALLOWED_ORIGINS` (comma-separated, e.g. `http://localhost:3000`)
@@ -29,8 +32,11 @@ Set these in Railway Variables:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_KEY`
+- `SUPABASE_JWT_SECRET`
 - `JWT_SECRET`
 - `GEMINI_API_KEY`
+- `WHATSAPP_SESSION_ENC_KEY`
+- `WEBHOOK_SECRET`
 - `CORS_ALLOWED_ORIGINS` (your frontend URL(s), comma-separated)
 - `TRUST_PROXY=1`
 
@@ -41,6 +47,12 @@ Set these in Vercel Environment Variables:
 - `NEXT_PUBLIC_API_URL` = your Railway backend URL (for example `https://your-backend.up.railway.app`)
 
 Do not place backend secrets (`DATABASE_URL`, Supabase service key, JWT secret) in Vercel frontend env vars.
+
+## Tenant Security Requirements
+
+- Protected tenant routes use a request-scoped Supabase client and require both `SUPABASE_ANON_KEY` and `SUPABASE_JWT_SECRET`.
+- WhatsApp Baileys session material is encrypted at rest with `WHATSAPP_SESSION_ENC_KEY`.
+- Future provider webhook routes should use `WEBHOOK_SECRET` with the shared HMAC verifier in `src/middleware/webhook.ts`.
 
 ## Prisma Connectivity
 
