@@ -12,6 +12,7 @@ if (process.env.NODE_ENV !== 'production') {
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import { createCorsOptions, resolveAllowedOrigins } from './lib/cors';
 import logger from './lib/utils/logger';
 import { isDbConfigured } from './lib/db';
 import { isRequestDbConfigured } from './lib/request-db';
@@ -31,38 +32,8 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 const ENABLE_WHATSAPP_RECONNECT_ON_BOOT = process.env.ENABLE_WHATSAPP_RECONNECT_ON_BOOT === 'true';
 const BODY_LIMIT = process.env.BODY_LIMIT || '1mb';
-
-function parseAllowedOrigins(raw: string | undefined): string[] {
-    if (!raw) return [];
-    return raw
-        .split(',')
-        .map(origin => origin.trim())
-        .filter(Boolean);
-}
-
-const configuredCorsOrigins = parseAllowedOrigins(process.env.CORS_ALLOWED_ORIGINS);
-const fallbackCorsOrigins = parseAllowedOrigins(process.env.FRONTEND_URL);
-const allowedCorsOrigins = configuredCorsOrigins.length > 0
-    ? configuredCorsOrigins
-    : (process.env.NODE_ENV === 'production'
-        ? fallbackCorsOrigins
-        : ['http://localhost:3000', 'http://127.0.0.1:3000']);
-
-if (process.env.NODE_ENV === 'production' && allowedCorsOrigins.length === 0) {
-    logger.warn('No CORS allowed origins configured for production; browser cross-origin requests will be blocked');
-}
-
-const corsOptions: cors.CorsOptions = {
-    origin(origin, callback) {
-        // Allow non-browser clients and same-origin server requests.
-        if (!origin) return callback(null, true);
-        if (allowedCorsOrigins.includes(origin)) return callback(null, true);
-        return callback(new Error('CORS origin not allowed'));
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
-};
+const allowedCorsOrigins = resolveAllowedOrigins();
+const corsOptions: cors.CorsOptions = createCorsOptions(allowedCorsOrigins);
 
 const authRateLimiter = createAuthRateLimiter();
 
@@ -210,6 +181,10 @@ const server = app.listen(PORT, HOST, async () => {
         host: HOST,
         port: PORT,
     }, 'HTTP server listening');
+    logger.info({
+        nodeEnv: process.env.NODE_ENV || 'development',
+        allowedCorsOrigins,
+    }, 'HTTP CORS configuration');
 
     logger.info(`
 ╔══════════════════════════════════════════════╗

@@ -18,7 +18,7 @@ Backend + frontend multi-tenant WhatsApp SaaS.
    - `WEBHOOK_SECRET`
 3. Optional:
    - `DIRECT_URL` (only if direct host is reachable)
-   - `CORS_ALLOWED_ORIGINS` (comma-separated, e.g. `http://localhost:3000`)
+   - `CORS_ORIGIN` (comma-separated, e.g. `https://omni-reply-ai.vercel.app,http://localhost:3000,http://localhost:5173`)
    - `TRUST_PROXY` (`1` in reverse-proxy environments)
 
 Notes:
@@ -37,14 +37,15 @@ Set these in Railway Variables:
 - `GEMINI_API_KEY`
 - `WHATSAPP_SESSION_ENC_KEY`
 - `WEBHOOK_SECRET`
-- `CORS_ALLOWED_ORIGINS` (your frontend URL(s), comma-separated)
+- `CORS_ORIGIN=https://omni-reply-ai.vercel.app,http://localhost:3000,http://localhost:5173`
 - `TRUST_PROXY=1`
 
 Do not set `PORT` manually; Railway injects it.
 
 ### Vercel (frontend project)
 Set these in Vercel Environment Variables:
-- `NEXT_PUBLIC_API_URL` = your Railway backend URL (for example `https://your-backend.up.railway.app`)
+- `NEXT_PUBLIC_API_URL=https://omnireply-ai-production.up.railway.app`
+- `BACKEND_API_URL=https://omnireply-ai-production.up.railway.app` if you use the Next.js rewrite path in `frontend/next.config.mjs`
 
 Do not place backend secrets (`DATABASE_URL`, Supabase service key, JWT secret) in Vercel frontend env vars.
 
@@ -53,6 +54,13 @@ Do not place backend secrets (`DATABASE_URL`, Supabase service key, JWT secret) 
 - Protected tenant routes use a request-scoped Supabase client and require both `SUPABASE_ANON_KEY` and `SUPABASE_JWT_SECRET`.
 - WhatsApp Baileys session material is encrypted at rest with `WHATSAPP_SESSION_ENC_KEY`.
 - Future provider webhook routes should use `WEBHOOK_SECRET` with the shared HMAC verifier in `src/middleware/webhook.ts`.
+
+## CORS
+
+- Backend env var: `CORS_ORIGIN`
+- Allowed origins: `https://omni-reply-ai.vercel.app`, `http://localhost:3000`, `http://localhost:5173`
+- Frontend env var used by the browser client: `NEXT_PUBLIC_API_URL`
+- Optional frontend rewrite env var: `BACKEND_API_URL`
 
 ## Prisma Connectivity
 
