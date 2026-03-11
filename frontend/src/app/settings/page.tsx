@@ -5,49 +5,66 @@
 
 import { useEffect, useState } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { api } from '@/lib/api';
+import { api, type AutomationSettingsPayload } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+
+const defaultAutomationSettings: AutomationSettingsPayload = {
+    autoReplyMode: 'DELAYED',
+    replyDelayMinutes: 20,
+    offlineGraceMinutes: 10,
+    workingHours: null,
+    enableHumanOverride: true,
+    humanOverrideMinutes: 30,
+};
 
 export default function SettingsPage() {
     const { user } = useAuth();
     const [tenant, setTenant] = useState<any>(null);
+    const [ownerActivity, setOwnerActivity] = useState<{ lastActiveAt: string | null; offline: boolean } | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
-    const [form, setForm] = useState({
+    const [tenantForm, setTenantForm] = useState({
         name: '',
-        businessType: '',
-        defaultLanguage: 'en',
-        dailyMessageLimit: 100,
-        aiPauseDuration: 30,
+        businessType: 'general',
+        aiPersonality: 'professional',
+        maxDailyMessages: 100,
     });
+    const [automationForm, setAutomationForm] = useState<AutomationSettingsPayload>(defaultAutomationSettings);
 
     useEffect(() => {
-        api.tenant.settings()
-            .then(data => {
-                setTenant(data.tenant);
-                setForm({
-                    name: data.tenant?.name || '',
-                    businessType: data.tenant?.businessType || '',
-                    defaultLanguage: data.tenant?.defaultLanguage || 'en',
-                    dailyMessageLimit: data.tenant?.dailyMessageLimit || 100,
-                    aiPauseDuration: data.tenant?.aiPauseDuration || 30,
+        Promise.all([api.tenant.settings(), api.settings.get()])
+            .then(([tenantData, automationData]) => {
+                setTenant(tenantData.tenant);
+                setTenantForm({
+                    name: tenantData.tenant?.name || '',
+                    businessType: tenantData.tenant?.businessType || 'general',
+                    aiPersonality: tenantData.tenant?.aiPersonality || 'professional',
+                    maxDailyMessages: tenantData.tenant?.maxDailyMessages || 100,
                 });
+                setAutomationForm(automationData.settings || defaultAutomationSettings);
+                setOwnerActivity(automationData.ownerActivity);
             })
             .catch(console.error)
             .finally(() => setLoading(false));
     }, []);
 
-    const handleSave = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleSave = async (event: React.FormEvent) => {
+        event.preventDefault();
         setSaving(true);
         setSaved(false);
         try {
-            await api.tenant.update(form);
+            await Promise.all([
+                api.tenant.update(tenantForm),
+                api.settings.update(automationForm),
+            ]);
             setSaved(true);
             setTimeout(() => setSaved(false), 3000);
-        } catch (err: any) { alert(err.message); }
-        finally { setSaving(false); }
+        } catch (error: any) {
+            alert(error.message);
+        } finally {
+            setSaving(false);
+        }
     };
 
     if (loading) {
@@ -60,29 +77,36 @@ export default function SettingsPage() {
         );
     }
 
+    const workingHoursEnabled = Boolean(automationForm.workingHours?.enabled);
+
     return (
         <DashboardLayout>
             <div className="page-header">
                 <div>
                     <h1 className="page-title">Settings</h1>
-                    <p className="page-subtitle">Configure your business and AI preferences</p>
+                    <p className="page-subtitle">Business profile, reply timing, and owner availability controls</p>
                 </div>
             </div>
 
-            <div className="grid-2">
-                {/* Business Settings */}
+            <form onSubmit={handleSave} className="grid-2">
                 <div className="card">
-                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>🏢 Business Settings</h3>
-                    <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>Business</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                         <div className="input-group">
                             <label>Business Name</label>
-                            <input className="input" value={form.name}
-                                onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+                            <input
+                                className="input"
+                                value={tenantForm.name}
+                                onChange={(event) => setTenantForm((current) => ({ ...current, name: event.target.value }))}
+                            />
                         </div>
                         <div className="input-group">
                             <label>Business Type</label>
-                            <select className="input" value={form.businessType}
-                                onChange={e => setForm(f => ({ ...f, businessType: e.target.value }))}>
+                            <select
+                                className="input"
+                                value={tenantForm.businessType}
+                                onChange={(event) => setTenantForm((current) => ({ ...current, businessType: event.target.value }))}
+                            >
                                 <option value="general">General</option>
                                 <option value="restaurant">Restaurant</option>
                                 <option value="retail">Retail / Shop</option>
@@ -94,81 +118,207 @@ export default function SettingsPage() {
                             </select>
                         </div>
                         <div className="input-group">
-                            <label>Default Language</label>
-                            <select className="input" value={form.defaultLanguage}
-                                onChange={e => setForm(f => ({ ...f, defaultLanguage: e.target.value }))}>
-                                <option value="en">English</option>
-                                <option value="so">Somali (Af-Soomaali)</option>
+                            <label>AI Personality</label>
+                            <select
+                                className="input"
+                                value={tenantForm.aiPersonality}
+                                onChange={(event) => setTenantForm((current) => ({ ...current, aiPersonality: event.target.value }))}
+                            >
+                                <option value="professional">Professional</option>
+                                <option value="friendly">Friendly</option>
+                                <option value="formal">Formal</option>
+                                <option value="concise">Concise</option>
                             </select>
                         </div>
-                        <button type="submit" className="btn btn-primary" disabled={saving}
-                            style={{ alignSelf: 'flex-start' }}>
-                            {saving ? <span className="loading-spinner" /> : saved ? '✅ Saved!' : '💾 Save Changes'}
-                        </button>
-                    </form>
+                        <div className="input-group">
+                            <label>Daily outbound limit</label>
+                            <input
+                                type="number"
+                                className="input"
+                                min={1}
+                                max={10000}
+                                value={tenantForm.maxDailyMessages}
+                                onChange={(event) => setTenantForm((current) => ({ ...current, maxDailyMessages: parseInt(event.target.value, 10) || 100 }))}
+                            />
+                        </div>
+                    </div>
                 </div>
 
-                {/* AI Settings */}
                 <div className="card">
-                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>🤖 AI Settings</h3>
+                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>Reply Automation</h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                         <div className="input-group">
-                            <label>Daily Message Limit</label>
-                            <input type="number" className="input" value={form.dailyMessageLimit}
-                                onChange={e => setForm(f => ({ ...f, dailyMessageLimit: parseInt(e.target.value) || 100 }))}
-                                min={10} max={10000} />
-                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                                Max AI-generated messages per day
-                            </span>
+                            <label>Auto reply mode</label>
+                            <select
+                                className="input"
+                                value={automationForm.autoReplyMode}
+                                onChange={(event) => setAutomationForm((current) => ({
+                                    ...current,
+                                    autoReplyMode: event.target.value as AutomationSettingsPayload['autoReplyMode'],
+                                }))}
+                            >
+                                <option value="OFF">Off</option>
+                                <option value="DELAYED">Delayed</option>
+                                <option value="OFFLINE_ONLY">Offline only</option>
+                                <option value="HYBRID">Hybrid</option>
+                            </select>
                         </div>
                         <div className="input-group">
-                            <label>Human Override Duration (minutes)</label>
-                            <input type="number" className="input" value={form.aiPauseDuration}
-                                onChange={e => setForm(f => ({ ...f, aiPauseDuration: parseInt(e.target.value) || 30 }))}
-                                min={5} max={1440} />
-                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                                When you reply manually, AI pauses for this duration
+                            <label>Reply delay (minutes)</label>
+                            <input
+                                type="number"
+                                className="input"
+                                min={1}
+                                value={automationForm.replyDelayMinutes}
+                                onChange={(event) => setAutomationForm((current) => ({
+                                    ...current,
+                                    replyDelayMinutes: parseInt(event.target.value, 10) || 20,
+                                }))}
+                            />
+                        </div>
+                        <div className="input-group">
+                            <label>Offline grace (minutes)</label>
+                            <input
+                                type="number"
+                                className="input"
+                                min={1}
+                                value={automationForm.offlineGraceMinutes}
+                                onChange={(event) => setAutomationForm((current) => ({
+                                    ...current,
+                                    offlineGraceMinutes: parseInt(event.target.value, 10) || 10,
+                                }))}
+                            />
+                        </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14 }}>
+                            <input
+                                type="checkbox"
+                                checked={automationForm.enableHumanOverride}
+                                onChange={(event) => setAutomationForm((current) => ({
+                                    ...current,
+                                    enableHumanOverride: event.target.checked,
+                                }))}
+                            />
+                            Pause AI when a human replies manually
+                        </label>
+                        <div className="input-group">
+                            <label>Human override pause (minutes)</label>
+                            <input
+                                type="number"
+                                className="input"
+                                min={1}
+                                value={automationForm.humanOverrideMinutes}
+                                onChange={(event) => setAutomationForm((current) => ({
+                                    ...current,
+                                    humanOverrideMinutes: parseInt(event.target.value, 10) || 30,
+                                }))}
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="card">
+                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>Working Hours</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14 }}>
+                            <input
+                                type="checkbox"
+                                checked={workingHoursEnabled}
+                                onChange={(event) => setAutomationForm((current) => ({
+                                    ...current,
+                                    workingHours: event.target.checked
+                                        ? (current.workingHours || { enabled: true, start: '09:00', end: '18:00', timezone: 'Africa/Mogadishu' })
+                                        : null,
+                                }))}
+                            />
+                            Restrict AI replies to working hours
+                        </label>
+                        {workingHoursEnabled && (
+                            <>
+                                <div className="input-group">
+                                    <label>Start time</label>
+                                    <input
+                                        type="time"
+                                        className="input"
+                                        value={automationForm.workingHours?.start || '09:00'}
+                                        onChange={(event) => setAutomationForm((current) => ({
+                                            ...current,
+                                            workingHours: {
+                                                enabled: true,
+                                                start: event.target.value,
+                                                end: current.workingHours?.end || '18:00',
+                                                timezone: current.workingHours?.timezone || 'Africa/Mogadishu',
+                                            },
+                                        }))}
+                                    />
+                                </div>
+                                <div className="input-group">
+                                    <label>End time</label>
+                                    <input
+                                        type="time"
+                                        className="input"
+                                        value={automationForm.workingHours?.end || '18:00'}
+                                        onChange={(event) => setAutomationForm((current) => ({
+                                            ...current,
+                                            workingHours: {
+                                                enabled: true,
+                                                start: current.workingHours?.start || '09:00',
+                                                end: event.target.value,
+                                                timezone: current.workingHours?.timezone || 'Africa/Mogadishu',
+                                            },
+                                        }))}
+                                    />
+                                </div>
+                                <div className="input-group">
+                                    <label>Timezone</label>
+                                    <input
+                                        className="input"
+                                        value={automationForm.workingHours?.timezone || 'Africa/Mogadishu'}
+                                        onChange={(event) => setAutomationForm((current) => ({
+                                            ...current,
+                                            workingHours: {
+                                                enabled: true,
+                                                start: current.workingHours?.start || '09:00',
+                                                end: current.workingHours?.end || '18:00',
+                                                timezone: event.target.value || 'Africa/Mogadishu',
+                                            },
+                                        }))}
+                                    />
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+
+                <div className="card">
+                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>Owner Activity</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 14 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>Status</span>
+                            <span className={`badge ${ownerActivity?.offline ? 'badge-danger' : 'badge-success'}`}>
+                                {ownerActivity?.offline ? 'Offline' : 'Online'}
                             </span>
                         </div>
-                    </div>
-                </div>
-
-                {/* Account Info */}
-                <div className="card">
-                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>👤 Account Info</h3>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
-                            <span style={{ color: 'var(--text-secondary)' }}>Name</span>
-                            <span style={{ fontWeight: 500 }}>{user?.name}</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>Last activity</span>
+                            <span>{ownerActivity?.lastActiveAt ? new Date(ownerActivity.lastActiveAt).toLocaleString() : 'Never'}</span>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
-                            <span style={{ color: 'var(--text-secondary)' }}>Email</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>Account</span>
                             <span>{user?.email}</span>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
-                            <span style={{ color: 'var(--text-secondary)' }}>Role</span>
-                            <span className="badge badge-info" style={{ textTransform: 'capitalize' }}>{user?.role}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                             <span style={{ color: 'var(--text-secondary)' }}>Plan</span>
-                            <span className="badge badge-success" style={{ textTransform: 'capitalize' }}>{tenant?.plan || 'free'}</span>
+                            <span className="badge badge-info" style={{ textTransform: 'capitalize' }}>{tenant?.plan || 'free'}</span>
                         </div>
                     </div>
                 </div>
 
-                {/* Danger Zone */}
-                <div className="card" style={{ borderColor: 'rgba(255, 71, 87, 0.3)' }}>
-                    <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, color: 'var(--status-offline)' }}>
-                        ⚠️ Danger Zone
-                    </h3>
-                    <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
-                        These actions are irreversible. Please proceed with caution.
-                    </p>
-                    <button className="btn btn-danger" disabled>
-                        Delete Account (Coming Soon)
+                <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-start' }}>
+                    <button type="submit" className="btn btn-primary" disabled={saving}>
+                        {saving ? <span className="loading-spinner" /> : saved ? 'Saved' : 'Save Settings'}
                     </button>
                 </div>
-            </div>
+            </form>
         </DashboardLayout>
     );
 }

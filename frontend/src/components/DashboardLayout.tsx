@@ -5,9 +5,12 @@
 // ============================================
 
 import { useAuth } from '@/lib/auth';
+import { api } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import Sidebar from '@/components/Sidebar';
+
+const HEARTBEAT_INTERVAL_MS = 60_000;
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     const { user, loading } = useAuth();
@@ -18,6 +21,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             router.push('/login');
         }
     }, [loading, user, router]);
+
+    useEffect(() => {
+        if (!user) {
+            return;
+        }
+
+        const sendHeartbeat = () => {
+            api.heartbeat.ping().catch(() => {
+                // Heartbeat should not disrupt the UI.
+            });
+        };
+
+        sendHeartbeat();
+        const interval = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+        return () => clearInterval(interval);
+    }, [user]);
 
     if (loading) {
         return (

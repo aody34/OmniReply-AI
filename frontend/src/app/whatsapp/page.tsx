@@ -135,7 +135,7 @@ export default function WhatsAppPage() {
                         <li>Click the <strong style={{ color: 'var(--accent)' }}>Connect</strong> button above</li>
                         <li>A QR code will appear — scan it with WhatsApp</li>
                         <li>Open WhatsApp → ⋮ Menu → <strong>Linked Devices</strong> → <strong>Link a Device</strong></li>
-                        <li>Once connected, the AI will automatically respond to customer messages</li>
+                        <li>Once connected, your delayed or offline automation rules can respond to customer messages</li>
                     </ol>
                 </div>
             )}

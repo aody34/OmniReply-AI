@@ -12,9 +12,44 @@ function normalizeApiBase(raw: string | undefined): string {
     return withProtocol.endsWith('/') ? withProtocol.slice(0, -1) : withProtocol;
 }
 
-// If NEXT_PUBLIC_API_URL is set, call backend directly.
-// Otherwise use same-origin (/api/*), which works with Vercel rewrites.
 const API_BASE = normalizeApiBase(process.env.NEXT_PUBLIC_API_URL);
+
+export type AutomationSettingsPayload = {
+    autoReplyMode: 'OFF' | 'DELAYED' | 'OFFLINE_ONLY' | 'HYBRID';
+    replyDelayMinutes: number;
+    offlineGraceMinutes: number;
+    workingHours: {
+        enabled?: boolean;
+        start?: string;
+        end?: string;
+        timezone?: string;
+    } | null;
+    enableHumanOverride: boolean;
+    humanOverrideMinutes: number;
+};
+
+export type FlowCondition = {
+    type: 'containsText' | 'languageIs' | 'businessHoursOnly' | 'contactTag' | 'messageCountThreshold';
+    operator?: string | null;
+    value?: any;
+    sortOrder?: number | null;
+};
+
+export type FlowAction = {
+    type: 'sendText' | 'sendTemplate' | 'addTag' | 'createLead' | 'updateLead' | 'callAIReply' | 'wait';
+    config?: any;
+    sortOrder?: number | null;
+    templateId?: string | null;
+};
+
+export type AutomationFlowInput = {
+    name: string;
+    enabled: boolean;
+    priority: number;
+    trigger?: { type: 'INCOMING_MESSAGE'; config?: any };
+    conditions: FlowCondition[];
+    actions: FlowAction[];
+};
 
 function getToken(): string | null {
     if (typeof window === 'undefined') return null;
@@ -37,7 +72,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     };
 
     if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
+        headers.Authorization = `Bearer ${token}`;
     }
 
     let res: Response;
@@ -46,14 +81,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
             ...options,
             headers,
         });
-    } catch (err) {
+    } catch {
         throw new Error('Cannot connect to server. Please check that the backend URL is correct and running.');
     }
 
-    let data: any;
+    let data: any = null;
     try {
         data = await res.json();
     } catch {
+        if (res.status === 204) {
+            return {} as T;
+        }
         if (res.status === 502) {
             throw new Error('Backend is unreachable (502). Check Railway deployment and service health.');
         }
@@ -76,7 +114,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     return data as T;
 }
 
-// ── Auth ──
 export const api = {
     auth: {
         register: (body: { email: string; password: string; name: string; businessName: string; businessType?: string }) =>
@@ -88,7 +125,10 @@ export const api = {
         me: () => request<{ user: any; tenant: any }>('/api/auth/me'),
     },
 
-    // ── WhatsApp ──
+    heartbeat: {
+        ping: () => request<{ ok: boolean; timestamp: string }>('/api/heartbeat', { method: 'POST' }),
+    },
+
     whatsapp: {
         connect: () => request<{ message: string; status: any }>('/api/whatsapp/connect', { method: 'POST' }),
         disconnect: () => request<{ message: string }>('/api/whatsapp/disconnect', { method: 'POST' }),
@@ -96,7 +136,6 @@ export const api = {
         qr: () => request<{ qr: string }>('/api/whatsapp/qr'),
     },
 
-    // ── Knowledge ──
     knowledge: {
         list: (category?: string) =>
             request<{ entries: any[]; total: number }>(`/api/knowledge${category ? `?category=${category}` : ''}`),
@@ -108,18 +147,17 @@ export const api = {
             request<{ message: string }>(`/api/knowledge/${id}`, { method: 'DELETE' }),
     },
 
-    // ── Leads ──
     leads: {
         list: (params?: { search?: string; page?: number; limit?: number }) => {
             const q = new URLSearchParams();
             if (params?.search) q.set('search', params.search);
             if (params?.page) q.set('page', String(params.page));
             if (params?.limit) q.set('limit', String(params.limit));
-            return request<{ leads: any[]; total: number; page: number; limit: number }>(`/api/leads?${q.toString()}`);
+            const query = q.toString();
+            return request<{ leads: any[]; total: number; page: number; limit: number }>(`/api/leads${query ? `?${query}` : ''}`);
         },
     },
 
-    // ── Broadcasts ──
     broadcasts: {
         list: () => request<{ broadcasts: any[]; total: number }>('/api/broadcast'),
         get: (id: string) => request<{ broadcast: any }>(`/api/broadcast/${id}`),
@@ -127,13 +165,38 @@ export const api = {
             request<{ broadcast: any }>('/api/broadcast', { method: 'POST', body: JSON.stringify(body) }),
     },
 
-    // ── Tenant ──
     tenant: {
         settings: () => request<{ tenant: any }>('/api/tenant/settings'),
-        update: (body: any) =>
+        update: (body: { name?: string; businessType?: string; aiPersonality?: string; maxDailyMessages?: number }) =>
             request<{ tenant: any }>('/api/tenant/settings', { method: 'PUT', body: JSON.stringify(body) }),
         dashboard: () => request<any>('/api/tenant/dashboard'),
         analytics: (days?: number) =>
             request<any>(`/api/tenant/analytics${days ? `?days=${days}` : ''}`),
+    },
+
+    settings: {
+        get: () => request<{ settings: AutomationSettingsPayload; ownerActivity: { lastActiveAt: string | null; offline: boolean } }>('/api/settings'),
+        update: (body: AutomationSettingsPayload) =>
+            request<{ settings: AutomationSettingsPayload }>('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
+    },
+
+    automations: {
+        list: () => request<{ flows: any[] }>('/api/automations'),
+        create: (body: AutomationFlowInput) =>
+            request<{ flow: any }>('/api/automations', { method: 'POST', body: JSON.stringify(body) }),
+        update: (id: string, body: AutomationFlowInput) =>
+            request<{ flow: any }>(`/api/automations/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+        delete: (id: string) =>
+            request<{ message: string }>(`/api/automations/${id}`, { method: 'DELETE' }),
+    },
+
+    templates: {
+        list: () => request<{ templates: any[] }>('/api/templates'),
+        create: (body: { name: string; content: string; variables: string[] }) =>
+            request<{ template: any }>('/api/templates', { method: 'POST', body: JSON.stringify(body) }),
+        update: (id: string, body: { name: string; content: string; variables: string[] }) =>
+            request<{ template: any }>(`/api/templates/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+        delete: (id: string) =>
+            request<{ message: string }>(`/api/templates/${id}`, { method: 'DELETE' }),
     },
 };

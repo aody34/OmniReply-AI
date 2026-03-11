@@ -21,10 +21,14 @@ import { createAuthRateLimiter } from './middleware/rate-limit';
 // Import routes
 import authRoutes from './routes/auth';
 import authProfileRoutes from './routes/auth-profile';
+import heartbeatRoutes from './routes/heartbeat';
 import whatsappRoutes from './routes/whatsapp';
 import knowledgeRoutes from './routes/knowledge';
 import leadsRoutes from './routes/leads';
 import broadcastRoutes from './routes/broadcast';
+import settingsRoutes from './routes/settings';
+import automationsRoutes from './routes/automations';
+import templatesRoutes from './routes/templates';
 import tenantRoutes from './routes/tenant';
 
 const app = express();
@@ -111,10 +115,14 @@ app.get('/ready', (_, res) => {
 // ── API Routes ──
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', authProfileRoutes);
+app.use('/api/heartbeat', heartbeatRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/knowledge', knowledgeRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/broadcast', broadcastRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/automations', automationsRoutes);
+app.use('/api/templates', templatesRoutes);
 app.use('/api/tenant', tenantRoutes);
 
 // ── API Documentation (root) ──
@@ -136,6 +144,23 @@ app.get('/', (_, res) => {
                 disconnect: 'POST /api/whatsapp/disconnect',
                 status: 'GET /api/whatsapp/status',
                 qrCode: 'GET /api/whatsapp/qr',
+            },
+            heartbeat: 'POST /api/heartbeat',
+            settings: {
+                get: 'GET /api/settings',
+                update: 'PUT /api/settings',
+            },
+            automations: {
+                list: 'GET /api/automations',
+                create: 'POST /api/automations',
+                update: 'PUT /api/automations/:id',
+                delete: 'DELETE /api/automations/:id',
+            },
+            templates: {
+                list: 'GET /api/templates',
+                create: 'POST /api/templates',
+                update: 'PUT /api/templates/:id',
+                delete: 'DELETE /api/templates/:id',
             },
             knowledge: {
                 list: 'GET /api/knowledge',
@@ -210,15 +235,20 @@ const server = app.listen(PORT, HOST, async () => {
 
     if (!ENABLE_WHATSAPP_RECONNECT_ON_BOOT) {
         logger.info('Skipping WhatsApp reconnect on startup (set ENABLE_WHATSAPP_RECONNECT_ON_BOOT=true to enable)');
-        return;
+    } else {
+        try {
+            const { reconnectAllSessions } = await import('./lib/whatsapp/connector');
+            await reconnectAllSessions();
+        } catch (err) {
+            logger.error({ error: err }, 'WhatsApp connector unavailable on startup; skipping session reconnect');
+        }
     }
 
-    // Reconnect any previously active WhatsApp sessions
     try {
-        const { reconnectAllSessions } = await import('./lib/whatsapp/connector');
-        await reconnectAllSessions();
+        const { startPendingReplyWorker } = await import('./lib/automation/worker');
+        startPendingReplyWorker();
     } catch (err) {
-        logger.error({ error: err }, 'WhatsApp connector unavailable on startup; skipping session reconnect');
+        logger.error({ error: err }, 'Failed to start pending reply worker');
     }
 });
 

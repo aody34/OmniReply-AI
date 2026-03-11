@@ -4,9 +4,12 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon --exec ts-node src/server.ts",
+    "dev:worker": "nodemon --exec ts-node src/worker.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "npm run test:security",
+    "worker": "node dist/worker.js",
+    "test": "vitest run tests --reporter=verbose",
+    "test:automation": "vitest run tests/automation --reporter=verbose",
     "test:security": "vitest run tests/security --reporter=verbose",
     "audit:security": "npm run test:security && npm audit --audit-level=moderate",
     "db:check": "node scripts/db-connectivity-check.js",

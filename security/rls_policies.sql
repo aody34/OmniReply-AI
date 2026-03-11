@@ -5,7 +5,6 @@
 -- The policies below scope rows by the custom JWT claim:
 -- current_setting('request.jwt.claims', true)::jsonb ->> 'tenantId'
 
--- Validation: confirm row security flags for tenant-owned tables.
 SELECT
     c.relname AS table_name,
     c.relrowsecurity AS rowsecurity
@@ -22,6 +21,14 @@ WHERE n.nspname = 'public'
       'Lead',
       'Broadcast',
       'DailyStat',
+      'Template',
+      'AutomationFlow',
+      'FlowTrigger',
+      'FlowCondition',
+      'FlowAction',
+      'TenantAutomationSettings',
+      'OwnerActivity',
+      'PendingReply',
       'tenants',
       'users',
       'whatsapp_sessions',
@@ -29,11 +36,18 @@ WHERE n.nspname = 'public'
       'knowledge_entries',
       'leads',
       'broadcasts',
-      'daily_stats'
+      'daily_stats',
+      'templates',
+      'automation_flows',
+      'flow_triggers',
+      'flow_conditions',
+      'flow_actions',
+      'tenant_automation_settings',
+      'owner_activity',
+      'pending_replies'
   ])
 ORDER BY c.relname;
 
--- Validation: list active policies and their definitions.
 SELECT
     schemaname,
     tablename,
@@ -52,6 +66,14 @@ WHERE schemaname = 'public'
       'Lead',
       'Broadcast',
       'DailyStat',
+      'Template',
+      'AutomationFlow',
+      'FlowTrigger',
+      'FlowCondition',
+      'FlowAction',
+      'TenantAutomationSettings',
+      'OwnerActivity',
+      'PendingReply',
       'tenants',
       'users',
       'whatsapp_sessions',
@@ -59,7 +81,15 @@ WHERE schemaname = 'public'
       'knowledge_entries',
       'leads',
       'broadcasts',
-      'daily_stats'
+      'daily_stats',
+      'templates',
+      'automation_flows',
+      'flow_triggers',
+      'flow_conditions',
+      'flow_actions',
+      'tenant_automation_settings',
+      'owner_activity',
+      'pending_replies'
   ])
 ORDER BY tablename, policyname;
 
@@ -82,6 +112,14 @@ BEGIN
                 ('Lead', false),
                 ('Broadcast', false),
                 ('DailyStat', false),
+                ('Template', false),
+                ('AutomationFlow', false),
+                ('FlowTrigger', false),
+                ('FlowCondition', false),
+                ('FlowAction', false),
+                ('TenantAutomationSettings', false),
+                ('OwnerActivity', false),
+                ('PendingReply', false),
                 ('tenants', true),
                 ('users', false),
                 ('whatsapp_sessions', false),
@@ -89,7 +127,15 @@ BEGIN
                 ('knowledge_entries', false),
                 ('leads', false),
                 ('broadcasts', false),
-                ('daily_stats', false)
+                ('daily_stats', false),
+                ('templates', false),
+                ('automation_flows', false),
+                ('flow_triggers', false),
+                ('flow_conditions', false),
+                ('flow_actions', false),
+                ('tenant_automation_settings', false),
+                ('owner_activity', false),
+                ('pending_replies', false)
         ) AS candidate(table_name, is_tenant_root)
     LOOP
         IF to_regclass(format('public.%I', table_record.table_name)) IS NULL THEN

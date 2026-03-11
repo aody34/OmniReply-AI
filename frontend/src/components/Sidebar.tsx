@@ -11,6 +11,8 @@ import styles from './Sidebar.module.css';
 const navItems = [
     { href: '/', label: 'Dashboard', icon: '📊' },
     { href: '/whatsapp', label: 'WhatsApp', icon: '💬' },
+    { href: '/automations', label: 'Automations', icon: '🧩' },
+    { href: '/templates', label: 'Templates', icon: '📝' },
     { href: '/knowledge', label: 'Knowledge Base', icon: '📚' },
     { href: '/leads', label: 'Leads / CRM', icon: '👥' },
     { href: '/broadcasts', label: 'Broadcasts', icon: '📢' },
@@ -23,7 +25,6 @@ export default function Sidebar() {
 
     return (
         <aside className={styles.sidebar}>
-            {/* Brand */}
             <div className={styles.brand}>
                 <div className={styles.logo}>⚡</div>
                 <div>
@@ -32,9 +33,8 @@ export default function Sidebar() {
                 </div>
             </div>
 
-            {/* Navigation */}
             <nav className={styles.nav}>
-                {navItems.map(item => (
+                {navItems.map((item) => (
                     <Link
                         key={item.href}
                         href={item.href}
@@ -46,7 +46,6 @@ export default function Sidebar() {
                 ))}
             </nav>
 
-            {/* User section */}
             <div className={styles.userSection}>
                 <div className={styles.userInfo}>
                     <div className={styles.avatar}>

@@ -67,6 +67,8 @@ model Lead {
   messageCount Int?      @default(1)
   lastContact  DateTime? @default(now()) @db.Timestamptz(6)
   tags         String[]  @default([])
+  lastManualReplyAt DateTime? @db.Timestamptz(6)
+  humanOverrideUntil DateTime? @db.Timestamptz(6)
   createdAt    DateTime? @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime? @default(now()) @db.Timestamptz(6)
   Tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -84,6 +86,9 @@ model MessageLog {
   message   String
   language  String?
   aiModel   String?
+  repliedBy String?   @default("NONE")
+  repliedAt DateTime? @db.Timestamptz(6)
+  pendingReplyId String? @db.Uuid
   createdAt DateTime? @default(now()) @db.Timestamptz(6)
   Tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -107,6 +112,11 @@ model Tenant {
   KnowledgeEntry   KnowledgeEntry[]
   Lead             Lead[]
   MessageLog       MessageLog[]
+  AutomationFlow   AutomationFlow[]
+  OwnerActivity    OwnerActivity[]
+  PendingReply     PendingReply[]
+  Template         Template[]
+  TenantAutomationSettings TenantAutomationSettings?
   User             User[]
   WhatsAppSession  WhatsAppSession?
 }
@@ -121,6 +131,7 @@ model User {
   role      String?   @default("owner")
   createdAt DateTime? @default(now()) @db.Timestamptz(6)
   updatedAt DateTime? @default(now()) @db.Timestamptz(6)
+  OwnerActivity OwnerActivity[]
   Tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([tenantId])
@@ -138,4 +149,148 @@ model WhatsAppSession {
   Tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([tenantId])
+}
+
+/// Tenant-scoped automation settings.
+model TenantAutomationSettings {
+  id                   String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  tenantId             String    @unique @db.Uuid
+  autoReplyMode        String?   @default("DELAYED")
+  replyDelayMinutes    Int?      @default(20)
+  offlineGraceMinutes  Int?      @default(10)
+  workingHours         Json?
+  enableHumanOverride  Boolean?  @default(true)
+  humanOverrideMinutes Int?      @default(30)
+  createdAt            DateTime? @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime? @default(now()) @db.Timestamptz(6)
+  Tenant               Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([tenantId])
+}
+
+/// Owner/staff activity used for offline detection.
+model OwnerActivity {
+  id                String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  tenantId          String    @db.Uuid
+  userId            String    @db.Uuid
+  lastActiveAt      DateTime? @default(now()) @db.Timestamptz(6)
+  lastHeartbeatAt   DateTime? @db.Timestamptz(6)
+  lastManualReplyAt DateTime? @db.Timestamptz(6)
+  source            String?
+  createdAt         DateTime? @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime? @default(now()) @db.Timestamptz(6)
+  Tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User              User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([tenantId, userId], map: "OwnerActivity_tenant_user_idx")
+  @@index([tenantId, lastActiveAt])
+}
+
+/// Saved message templates.
+model Template {
+  id          String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  tenantId    String       @db.Uuid
+  name        String
+  content     String
+  variables   Json?
+  createdAt   DateTime?    @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime?    @default(now()) @db.Timestamptz(6)
+  Tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  FlowAction  FlowAction[]
+  PendingReply PendingReply[]
+
+  @@index([tenantId])
+}
+
+/// n8n-like automation flow definition.
+model AutomationFlow {
+  id          String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  tenantId    String         @db.Uuid
+  name        String
+  enabled     Boolean?       @default(true)
+  priority    Int?           @default(0)
+  createdAt   DateTime?      @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime?      @default(now()) @db.Timestamptz(6)
+  Tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Trigger     FlowTrigger?
+  Condition   FlowCondition[]
+  Action      FlowAction[]
+  PendingReply PendingReply[]
+
+  @@index([tenantId, enabled, priority])
+}
+
+model FlowTrigger {
+  id         String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  flowId     String         @unique @db.Uuid
+  tenantId   String         @db.Uuid
+  type       String         @default("INCOMING_MESSAGE")
+  config     Json?
+  createdAt  DateTime?      @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime?      @default(now()) @db.Timestamptz(6)
+  Flow       AutomationFlow @relation(fields: [flowId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([tenantId])
+}
+
+model FlowCondition {
+  id         String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  flowId     String         @db.Uuid
+  tenantId   String         @db.Uuid
+  type       String
+  operator   String?
+  value      Json?
+  sortOrder  Int?           @default(0)
+  createdAt  DateTime?      @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime?      @default(now()) @db.Timestamptz(6)
+  Flow       AutomationFlow @relation(fields: [flowId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([flowId, sortOrder])
+  @@index([tenantId])
+}
+
+model FlowAction {
+  id         String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  flowId     String         @db.Uuid
+  tenantId   String         @db.Uuid
+  type       String
+  config     Json?
+  sortOrder  Int?           @default(0)
+  templateId String?        @db.Uuid
+  createdAt  DateTime?      @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime?      @default(now()) @db.Timestamptz(6)
+  Flow       AutomationFlow @relation(fields: [flowId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Template   Template?      @relation(fields: [templateId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([flowId, sortOrder])
+  @@index([templateId])
+  @@index([tenantId])
+}
+
+/// Scheduled reply queue.
+model PendingReply {
+  id          String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  tenantId    String         @db.Uuid
+  messageLogId String?       @db.Uuid
+  phone       String
+  status      String?        @default("pending")
+  sourceType  String?        @default("DEFAULT")
+  scheduledAt DateTime       @db.Timestamptz(6)
+  expiresAt   DateTime       @db.Timestamptz(6)
+  attempts    Int?           @default(0)
+  payload     Json?
+  lastError   String?
+  sentAt      DateTime?      @db.Timestamptz(6)
+  cancelledAt DateTime?      @db.Timestamptz(6)
+  flowId      String?        @db.Uuid
+  templateId  String?        @db.Uuid
+  createdAt   DateTime?      @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime?      @default(now()) @db.Timestamptz(6)
+  Tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Flow        AutomationFlow? @relation(fields: [flowId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  Template    Template?      @relation(fields: [templateId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([tenantId, status, scheduledAt], map: "PendingReply_queue_idx")
+  @@index([tenantId, phone])
+  @@index([messageLogId])
 }

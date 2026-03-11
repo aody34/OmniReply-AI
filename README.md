@@ -1,34 +1,53 @@
 # OmniReply AI
 
-Backend + frontend multi-tenant WhatsApp SaaS.
+Backend + frontend multi-tenant WhatsApp SaaS with delayed reply automation, templates, and tenant-scoped flows.
+
+## Stack
+
+- Backend: Node.js + TypeScript + Express
+- Frontend: Next.js
+- Database: Supabase Postgres
+- Runtime data access: Supabase JS
+- Schema source of truth: Prisma schema + SQL migrations
+- WhatsApp transport: Baileys
 
 ## Environment Variables
 
 ### Local (`.env`)
-1. Copy `.env.example` to `.env`.
-2. Set backend secrets in `.env`:
-   - `DATABASE_URL` (Supabase pooled Postgres URL, must start with `postgresql://` or `postgres://`)
-   - `SUPABASE_URL`
-   - `SUPABASE_ANON_KEY`
-   - `SUPABASE_SERVICE_KEY`
-   - `SUPABASE_JWT_SECRET`
-   - `JWT_SECRET`
-   - `GEMINI_API_KEY`
-   - `WHATSAPP_SESSION_ENC_KEY`
-   - `WEBHOOK_SECRET`
-3. Optional:
-   - `DIRECT_URL` (only if direct host is reachable)
-   - `CORS_ORIGIN` (comma-separated, e.g. `https://omni-reply-ai.vercel.app,http://localhost:3000,http://localhost:5173`)
-   - `TRUST_PROXY` (`1` in reverse-proxy environments)
+Copy `.env.example` to `.env` and set:
+
+Required backend variables:
+- `DATABASE_URL`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_KEY`
+- `SUPABASE_JWT_SECRET`
+- `JWT_SECRET`
+- `GEMINI_API_KEY`
+- `WHATSAPP_SESSION_ENC_KEY`
+- `WEBHOOK_SECRET`
+- `CORS_ORIGIN`
+
+Recommended backend variables:
+- `TRUST_PROXY=0` locally
+- `ENABLE_PENDING_REPLY_WORKER=true`
+- `ENABLE_WHATSAPP_RECONNECT_ON_BOOT=true`
+- `PENDING_REPLY_POLL_INTERVAL_MS=15000`
+- `GEMINI_MODEL=gemini-1.5-flash`
+- `BODY_LIMIT=1mb`
+
+Frontend variables:
+- `NEXT_PUBLIC_API_URL=http://localhost:3000`
+- `BACKEND_API_URL=http://localhost:3000` if using rewrites
 
 Notes:
-- Prisma in this repo uses `DATABASE_URL` for connectivity.
-- If direct host/IPv6 is blocked on your network, leave `DIRECT_URL` unset or set it equal to `DATABASE_URL`.
-- Quick format rule: `DATABASE_URL` must start with `postgresql://` (or `postgres://`).
+- `DATABASE_URL` must start with `postgresql://` or `postgres://`.
+- Do not put backend secrets into Vercel frontend env vars.
+- Do not set `PORT` manually on Railway.
 
-### Railway (backend service)
+### Railway (backend)
 Set these in Railway Variables:
-- `DATABASE_URL` (pooled Supabase connection string)
+- `DATABASE_URL`
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_KEY`
@@ -39,55 +58,142 @@ Set these in Railway Variables:
 - `WEBHOOK_SECRET`
 - `CORS_ORIGIN=https://omni-reply-ai.vercel.app,http://localhost:3000,http://localhost:5173`
 - `TRUST_PROXY=1`
+- `ENABLE_PENDING_REPLY_WORKER=true`
+- `ENABLE_WHATSAPP_RECONNECT_ON_BOOT=true`
+- `PENDING_REPLY_POLL_INTERVAL_MS=15000`
 
-Do not set `PORT` manually; Railway injects it.
-
-### Vercel (frontend project)
-Set these in Vercel Environment Variables:
+### Vercel (frontend)
+Set these in Vercel:
 - `NEXT_PUBLIC_API_URL=https://omnireply-ai-production.up.railway.app`
-- `BACKEND_API_URL=https://omnireply-ai-production.up.railway.app` if you use the Next.js rewrite path in `frontend/next.config.mjs`
+- `BACKEND_API_URL=https://omnireply-ai-production.up.railway.app` if you use rewrites
 
-Do not place backend secrets (`DATABASE_URL`, Supabase service key, JWT secret) in Vercel frontend env vars.
+## Local Development
 
-## Tenant Security Requirements
-
-- Protected tenant routes use a request-scoped Supabase client and require both `SUPABASE_ANON_KEY` and `SUPABASE_JWT_SECRET`.
-- WhatsApp Baileys session material is encrypted at rest with `WHATSAPP_SESSION_ENC_KEY`.
-- Future provider webhook routes should use `WEBHOOK_SECRET` with the shared HMAC verifier in `src/middleware/webhook.ts`.
-
-## CORS
-
-- Backend env var: `CORS_ORIGIN`
-- Allowed origins: `https://omni-reply-ai.vercel.app`, `http://localhost:3000`, `http://localhost:5173`
-- Frontend env var used by the browser client: `NEXT_PUBLIC_API_URL`
-- Optional frontend rewrite env var: `BACKEND_API_URL`
-
-## Prisma Connectivity
-
-Run a safe connectivity check (no secrets printed):
-
+Backend:
 ```bash
-npm run db:check
+npm install
+npm run dev
 ```
 
-Pull schema from the live database:
-
+Frontend:
 ```bash
+npm --prefix frontend install
+npm --prefix frontend run dev
+```
+
+Default worker model:
+- `npm run dev` starts the API and also starts the embedded pending-reply worker.
+- This is the recommended mode with Baileys because the same process owns the WhatsApp socket and sends delayed replies.
+
+Optional standalone worker:
+```bash
+npm run dev:worker
+npm run worker
+```
+
+Important:
+- Do not run both the embedded worker and a separate worker against the same live Baileys sessions unless you deliberately move WhatsApp socket ownership to the worker process.
+- With the current Baileys architecture, the recommended Railway deployment is a single web service with the embedded worker enabled.
+
+## Database Setup
+
+Fresh setup:
+- Run [`schema.sql`](schema.sql) in the Supabase SQL editor.
+
+Incremental migration:
+- Run [`prisma/migrations/20260311_whatsapp_automation/migration.sql`](prisma/migrations/20260311_whatsapp_automation/migration.sql).
+
+Prisma connectivity:
+```bash
+npm run db:check
 npm run db:pull
 ```
 
-If `db pull` fails due direct-host connectivity, keep using pooled `DATABASE_URL` and do not configure a separate direct URL.
+## Row Level Security
+
+Apply RLS policies for tenant-scoped tables:
+- Run [`security/rls_policies.sql`](security/rls_policies.sql) in the Supabase SQL editor.
+
+This includes:
+- `Tenant`
+- `User`
+- `WhatsAppSession`
+- `MessageLog`
+- `KnowledgeEntry`
+- `Lead`
+- `Broadcast`
+- `DailyStat`
+- `Template`
+- `AutomationFlow`
+- `FlowTrigger`
+- `FlowCondition`
+- `FlowAction`
+- `TenantAutomationSettings`
+- `OwnerActivity`
+- `PendingReply`
+
+## WhatsApp Automation Configuration
+
+Automation settings API:
+- `GET /api/settings`
+- `PUT /api/settings`
+
+Automation CRUD:
+- `GET /api/automations`
+- `POST /api/automations`
+- `PUT /api/automations/:id`
+- `DELETE /api/automations/:id`
+
+Templates CRUD:
+- `GET /api/templates`
+- `POST /api/templates`
+- `PUT /api/templates/:id`
+- `DELETE /api/templates/:id`
+
+Heartbeat:
+- `POST /api/heartbeat`
+
+Example delayed mode:
+```json
+{
+  "autoReplyMode": "DELAYED",
+  "replyDelayMinutes": 20,
+  "offlineGraceMinutes": 10,
+  "workingHours": null,
+  "enableHumanOverride": true,
+  "humanOverrideMinutes": 30
+}
+```
+
+Reply modes:
+- `OFF`: never auto-reply
+- `DELAYED`: always queue reply after the configured delay
+- `OFFLINE_ONLY`: queue immediately, but only send when the owner is offline
+- `HYBRID`: apply the delay and still require the owner to be offline when the job runs
 
 ## Tests
 
-Run default tests:
-
+Run all tests:
 ```bash
 npm test
 ```
 
-Run security tests only:
+Run automation tests only:
+```bash
+npm run test:automation
+```
 
+Run security tests only:
 ```bash
 npm run test:security
+```
+
+Build backend:
+```bash
+npm run build
+```
+
+Build frontend:
+```bash
+npm --prefix frontend run build
 ```

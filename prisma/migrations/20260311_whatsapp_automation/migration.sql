@@ -1,91 +1,16 @@
--- ============================================
--- OmniReply AI — Database Schema Setup
--- Run this in Supabase SQL Editor for a fresh setup
--- ============================================
+-- OmniReply AI
+-- WhatsApp automation + delayed reply queue migration
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-CREATE TABLE IF NOT EXISTS "Tenant" (
-  "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  "name" TEXT NOT NULL,
-  "businessType" TEXT DEFAULT 'general',
-  "plan" TEXT DEFAULT 'free',
-  "maxDailyMessages" INT DEFAULT 100,
-  "isActive" BOOLEAN DEFAULT true,
-  "aiPersonality" TEXT DEFAULT 'professional',
-  "createdAt" TIMESTAMPTZ DEFAULT NOW(),
-  "updatedAt" TIMESTAMPTZ DEFAULT NOW()
-);
+ALTER TABLE "Lead"
+    ADD COLUMN IF NOT EXISTS "lastManualReplyAt" TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS "humanOverrideUntil" TIMESTAMPTZ;
 
-CREATE TABLE IF NOT EXISTS "User" (
-  "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  "tenantId" UUID NOT NULL REFERENCES "Tenant"("id") ON DELETE CASCADE,
-  "email" TEXT NOT NULL UNIQUE,
-  "password" TEXT NOT NULL,
-  "name" TEXT NOT NULL,
-  "role" TEXT DEFAULT 'owner',
-  "createdAt" TIMESTAMPTZ DEFAULT NOW(),
-  "updatedAt" TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS "User_tenantId_idx" ON "User"("tenantId");
-
-CREATE TABLE IF NOT EXISTS "WhatsAppSession" (
-  "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  "tenantId" UUID NOT NULL UNIQUE REFERENCES "Tenant"("id") ON DELETE CASCADE,
-  "phone" TEXT,
-  "status" TEXT DEFAULT 'disconnected',
-  "lastActive" TIMESTAMPTZ,
-  "createdAt" TIMESTAMPTZ DEFAULT NOW(),
-  "updatedAt" TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS "WhatsAppSession_tenantId_idx" ON "WhatsAppSession"("tenantId");
-
-CREATE TABLE IF NOT EXISTS "KnowledgeEntry" (
-  "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  "tenantId" UUID NOT NULL REFERENCES "Tenant"("id") ON DELETE CASCADE,
-  "category" TEXT NOT NULL,
-  "title" TEXT NOT NULL,
-  "content" TEXT NOT NULL,
-  "isActive" BOOLEAN DEFAULT true,
-  "createdAt" TIMESTAMPTZ DEFAULT NOW(),
-  "updatedAt" TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS "KnowledgeEntry_tenantId_idx" ON "KnowledgeEntry"("tenantId");
-CREATE INDEX IF NOT EXISTS "KnowledgeEntry_category_idx" ON "KnowledgeEntry"("tenantId", "category");
-
-CREATE TABLE IF NOT EXISTS "Lead" (
-  "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  "tenantId" UUID NOT NULL REFERENCES "Tenant"("id") ON DELETE CASCADE,
-  "phone" TEXT NOT NULL,
-  "name" TEXT,
-  "firstMessage" TEXT,
-  "messageCount" INT DEFAULT 1,
-  "lastContact" TIMESTAMPTZ DEFAULT NOW(),
-  "tags" TEXT[] DEFAULT '{}',
-  "lastManualReplyAt" TIMESTAMPTZ,
-  "humanOverrideUntil" TIMESTAMPTZ,
-  "createdAt" TIMESTAMPTZ DEFAULT NOW(),
-  "updatedAt" TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS "Lead_tenant_phone_idx" ON "Lead"("tenantId", "phone");
-CREATE INDEX IF NOT EXISTS "Lead_tenantId_idx" ON "Lead"("tenantId");
-
-CREATE TABLE IF NOT EXISTS "MessageLog" (
-  "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  "tenantId" UUID NOT NULL REFERENCES "Tenant"("id") ON DELETE CASCADE,
-  "direction" TEXT NOT NULL,
-  "phone" TEXT NOT NULL,
-  "message" TEXT NOT NULL,
-  "language" TEXT,
-  "aiModel" TEXT,
-  "repliedBy" TEXT DEFAULT 'NONE',
-  "repliedAt" TIMESTAMPTZ,
-  "pendingReplyId" UUID,
-  "createdAt" TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS "MessageLog_tenantId_idx" ON "MessageLog"("tenantId");
-CREATE INDEX IF NOT EXISTS "MessageLog_phone_idx" ON "MessageLog"("tenantId", "phone");
-CREATE INDEX IF NOT EXISTS "MessageLog_pendingReplyId_idx" ON "MessageLog"("pendingReplyId");
+ALTER TABLE "MessageLog"
+    ADD COLUMN IF NOT EXISTS "repliedBy" TEXT DEFAULT 'NONE',
+    ADD COLUMN IF NOT EXISTS "repliedAt" TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS "pendingReplyId" UUID;
 
 CREATE TABLE IF NOT EXISTS "Template" (
   "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -119,6 +44,8 @@ CREATE TABLE IF NOT EXISTS "FlowTrigger" (
   "updatedAt" TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS "FlowTrigger_tenantId_idx" ON "FlowTrigger"("tenantId");
+ALTER TABLE "FlowTrigger" ADD COLUMN IF NOT EXISTS "tenantId" UUID REFERENCES "Tenant"("id") ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS "FlowTrigger_tenantId_idx" ON "FlowTrigger"("tenantId");
 
 CREATE TABLE IF NOT EXISTS "FlowCondition" (
   "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -131,6 +58,7 @@ CREATE TABLE IF NOT EXISTS "FlowCondition" (
   "createdAt" TIMESTAMPTZ DEFAULT NOW(),
   "updatedAt" TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE "FlowCondition" ADD COLUMN IF NOT EXISTS "tenantId" UUID REFERENCES "Tenant"("id") ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS "FlowCondition_flow_idx" ON "FlowCondition"("flowId", "sortOrder");
 CREATE INDEX IF NOT EXISTS "FlowCondition_tenantId_idx" ON "FlowCondition"("tenantId");
 
@@ -145,6 +73,7 @@ CREATE TABLE IF NOT EXISTS "FlowAction" (
   "createdAt" TIMESTAMPTZ DEFAULT NOW(),
   "updatedAt" TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE "FlowAction" ADD COLUMN IF NOT EXISTS "tenantId" UUID REFERENCES "Tenant"("id") ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS "FlowAction_flow_idx" ON "FlowAction"("flowId", "sortOrder");
 CREATE INDEX IF NOT EXISTS "FlowAction_tenantId_idx" ON "FlowAction"("tenantId");
 CREATE INDEX IF NOT EXISTS "FlowAction_templateId_idx" ON "FlowAction"("templateId");
@@ -199,37 +128,3 @@ CREATE TABLE IF NOT EXISTS "PendingReply" (
 CREATE INDEX IF NOT EXISTS "PendingReply_queue_idx" ON "PendingReply"("tenantId", "status", "scheduledAt");
 CREATE INDEX IF NOT EXISTS "PendingReply_tenant_phone_idx" ON "PendingReply"("tenantId", "phone");
 CREATE INDEX IF NOT EXISTS "PendingReply_messageLogId_idx" ON "PendingReply"("messageLogId");
-
-CREATE TABLE IF NOT EXISTS "Broadcast" (
-  "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  "tenantId" UUID NOT NULL REFERENCES "Tenant"("id") ON DELETE CASCADE,
-  "message" TEXT NOT NULL,
-  "recipients" TEXT[] DEFAULT '{}',
-  "sentCount" INT DEFAULT 0,
-  "failedCount" INT DEFAULT 0,
-  "status" TEXT DEFAULT 'pending',
-  "scheduledAt" TIMESTAMPTZ,
-  "completedAt" TIMESTAMPTZ,
-  "createdAt" TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS "Broadcast_tenantId_idx" ON "Broadcast"("tenantId");
-
-CREATE TABLE IF NOT EXISTS "DailyStat" (
-  "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  "tenantId" UUID NOT NULL REFERENCES "Tenant"("id") ON DELETE CASCADE,
-  "date" DATE NOT NULL,
-  "messagesIn" INT DEFAULT 0,
-  "messagesOut" INT DEFAULT 0,
-  "aiResponses" INT DEFAULT 0,
-  "newLeads" INT DEFAULT 0,
-  "broadcastsSent" INT DEFAULT 0,
-  "createdAt" TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS "DailyStat_tenant_date_idx" ON "DailyStat"("tenantId", "date");
-CREATE INDEX IF NOT EXISTS "DailyStat_tenantId_idx" ON "DailyStat"("tenantId");
-
-ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "lastManualReplyAt" TIMESTAMPTZ;
-ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "humanOverrideUntil" TIMESTAMPTZ;
-ALTER TABLE "MessageLog" ADD COLUMN IF NOT EXISTS "repliedBy" TEXT DEFAULT 'NONE';
-ALTER TABLE "MessageLog" ADD COLUMN IF NOT EXISTS "repliedAt" TIMESTAMPTZ;
-ALTER TABLE "MessageLog" ADD COLUMN IF NOT EXISTS "pendingReplyId" UUID;

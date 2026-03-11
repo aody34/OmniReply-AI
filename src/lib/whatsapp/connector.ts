@@ -14,11 +14,17 @@ import supabase from '../db';
 import logger from '../utils/logger';
 import { statusMonitor } from './status-monitor';
 import { sessionStore } from './session-store';
+import { getTenantAutomationSettings } from '../automation/settings';
+import {
+    cancelPendingRepliesForPhone,
+    normalizePhoneIdentifier,
+    setLeadHumanOverride,
+} from '../automation/pending-replies';
+import { recordTenantManualReplyActivity } from '../automation/owner-activity';
 
 // QR code storage
 const qrCodes: Map<string, string> = new Map();
 import { handleIncomingMessage } from '../ai/handler';
-import { activateHumanOverride } from '../amniga/anti-ban';
 
 declare module 'qrcode-terminal' {
     export function generate(text: string, options?: { small?: boolean }): void;
@@ -142,25 +148,33 @@ export async function connectSession(tenantId: string): Promise<void> {
         if (type !== 'notify') return;
 
         for (const msg of messages) {
-            // Skip own messages and status broadcasts
-            if (msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') continue;
+            if (msg.key.remoteJid === 'status@broadcast') continue;
 
-            const phone = msg.key.remoteJid || '';
+            const phone = normalizePhoneIdentifier(msg.key.remoteJid || '');
             const text =
                 msg.message?.conversation ||
                 msg.message?.extendedTextMessage?.text ||
                 '';
 
-            if (!text || !phone) continue;
+            if (!phone) continue;
 
-            // Check if this is the owner replying (human override)
             if (msg.key.fromMe) {
-                activateHumanOverride(tenantId, phone);
+                try {
+                    const settings = await getTenantAutomationSettings(tenantId);
+                    await recordTenantManualReplyActivity(tenantId);
+                    await cancelPendingRepliesForPhone(tenantId, phone, 'manual_reply_detected');
+                    if (settings.enableHumanOverride) {
+                        await setLeadHumanOverride(tenantId, phone, settings.humanOverrideMinutes);
+                    }
+                } catch (error) {
+                    logger.error({ error, tenantId, phone }, 'Failed to register manual WhatsApp reply activity');
+                }
                 continue;
             }
 
-            // Route to AI handler
-            await handleIncomingMessage(tenantId, phone, text, socket);
+            if (!text) continue;
+
+            await handleIncomingMessage(tenantId, phone, text);
         }
     });
 }
