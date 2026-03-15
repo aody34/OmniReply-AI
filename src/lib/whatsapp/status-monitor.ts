@@ -5,7 +5,6 @@
 
 import { EventEmitter } from 'events';
 import { WhatsAppStatus } from '../../types';
-import logger from '../utils/logger';
 
 class StatusMonitor extends EventEmitter {
     private statuses: Map<string, WhatsAppStatus> = new Map();
@@ -13,18 +12,10 @@ class StatusMonitor extends EventEmitter {
     /**
      * Update the status of a tenant's WhatsApp connection
      */
-    updateStatus(tenantId: string, update: Partial<WhatsAppStatus>): void {
-        const current = this.statuses.get(tenantId) || {
-            tenantId,
-            status: 'disconnected' as const,
-        };
-
-        const updated: WhatsAppStatus = { ...current, ...update, tenantId };
-        this.statuses.set(tenantId, updated);
-
-        logger.info({ tenantId, status: updated.status }, 'WhatsApp status updated');
-        this.emit('status_change', updated);
-        this.emit(`status:${tenantId}`, updated);
+    setStatus(status: WhatsAppStatus): void {
+        this.statuses.set(status.tenantId, status);
+        this.emit('status_change', status);
+        this.emit(`status:${status.tenantId}`, status);
     }
 
     /**
@@ -33,7 +24,15 @@ class StatusMonitor extends EventEmitter {
     getStatus(tenantId: string): WhatsAppStatus {
         return this.statuses.get(tenantId) || {
             tenantId,
-            status: 'disconnected',
+            sessionId: null,
+            state: 'DISCONNECTED',
+            qr: null,
+            reason: null,
+            phoneNumber: null,
+            updatedAt: new Date(0).toISOString(),
+            lastSeenAt: null,
+            connectedAt: null,
+            disconnectedAt: null,
         };
     }
 
@@ -49,7 +48,7 @@ class StatusMonitor extends EventEmitter {
      */
     removeStatus(tenantId: string): void {
         this.statuses.delete(tenantId);
-        this.emit(`status:${tenantId}`, { tenantId, status: 'disconnected' });
+        this.emit(`status:${tenantId}`, this.getStatus(tenantId));
     }
 
     /**
@@ -57,7 +56,7 @@ class StatusMonitor extends EventEmitter {
      */
     isConnected(tenantId: string): boolean {
         const status = this.statuses.get(tenantId);
-        return status?.status === 'connected';
+        return status?.state === 'CONNECTED';
     }
 }
 

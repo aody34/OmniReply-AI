@@ -14,6 +14,22 @@ function normalizeApiBase(raw: string | undefined): string {
 
 const API_BASE = normalizeApiBase(process.env.NEXT_PUBLIC_API_URL);
 
+export type WhatsAppState = 'DISCONNECTED' | 'QR' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
+
+export type WhatsAppStatusPayload = {
+    tenantId: string;
+    sessionId: string | null;
+    state: WhatsAppState;
+    qr: string | null;
+    reason: string | null;
+    phoneNumber: string | null;
+    updatedAt: string;
+    lastSeenAt: string | null;
+    connectedAt: string | null;
+    disconnectedAt: string | null;
+    serverTime: string;
+};
+
 export type AutomationSettingsPayload = {
     autoReplyMode: 'OFF' | 'DELAYED' | 'OFFLINE_ONLY' | 'HYBRID';
     replyDelayMinutes: number;
@@ -130,10 +146,10 @@ export const api = {
     },
 
     whatsapp: {
-        connect: () => request<{ message: string; status: any }>('/api/whatsapp/connect', { method: 'POST' }),
-        disconnect: () => request<{ message: string }>('/api/whatsapp/disconnect', { method: 'POST' }),
-        status: () => request<{ status: any }>('/api/whatsapp/status'),
-        qr: () => request<{ qr: string }>('/api/whatsapp/qr'),
+        connect: () => request<{ message: string; status: WhatsAppStatusPayload }>('/api/whatsapp/connect', { method: 'POST' }),
+        disconnect: () => request<{ message: string; status: WhatsAppStatusPayload }>('/api/whatsapp/disconnect', { method: 'POST' }),
+        status: (options: RequestInit = {}) => request<WhatsAppStatusPayload>('/api/whatsapp/status', options),
+        qr: () => request<{ qr: string; updatedAt: string; tenantId: string }>('/api/whatsapp/qr'),
     },
 
     knowledge: {

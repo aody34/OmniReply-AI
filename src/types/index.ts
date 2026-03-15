@@ -11,12 +11,24 @@ export interface TenantConfig {
     defaultLanguage: string;
 }
 
+export type WhatsAppSessionState =
+    | 'DISCONNECTED'
+    | 'QR'
+    | 'CONNECTING'
+    | 'CONNECTED'
+    | 'ERROR';
+
 export interface WhatsAppStatus {
     tenantId: string;
-    status: 'connected' | 'disconnected' | 'authenticating' | 'qr_ready';
-    qrCode?: string;
-    phoneNumber?: string;
-    lastActive?: Date;
+    sessionId: string | null;
+    state: WhatsAppSessionState;
+    qr: string | null;
+    reason: string | null;
+    phoneNumber: string | null;
+    updatedAt: string;
+    lastSeenAt: string | null;
+    connectedAt: string | null;
+    disconnectedAt: string | null;
 }
 
 export interface IncomingMessage {

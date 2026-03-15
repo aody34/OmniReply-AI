@@ -77,18 +77,18 @@ export default function DashboardPage() {
             📱 WhatsApp Status
           </h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span className={`badge ${data?.whatsappStatus?.status === 'connected'
+            <span className={`badge ${data?.whatsappStatus?.state === 'CONNECTED'
               ? 'badge-success' : 'badge-danger'}`}>
               <span style={{
                 width: 8, height: 8, borderRadius: '50%',
-                background: data?.whatsappStatus?.status === 'connected'
+                background: data?.whatsappStatus?.state === 'CONNECTED'
                   ? 'var(--status-online)' : 'var(--status-offline)',
                 display: 'inline-block',
               }} />
-              {data?.whatsappStatus?.status || 'disconnected'}
+              {data?.whatsappStatus?.state || 'DISCONNECTED'}
             </span>
           </div>
-          {data?.whatsappStatus?.status !== 'connected' && (
+          {data?.whatsappStatus?.state !== 'CONNECTED' && (
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 12 }}>
               Go to WhatsApp page to connect your number.
             </p>

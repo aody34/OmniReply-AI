@@ -5,7 +5,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth';
 import { createWhatsAppRateLimiter } from '../middleware/rate-limit';
-import { statusMonitor } from '../lib/whatsapp/status-monitor';
+import { getCanonicalWhatsAppStatus, setCanonicalWhatsAppState } from '../lib/whatsapp/session-state';
 import logger from '../lib/utils/logger';
 
 const router = Router();
@@ -16,6 +16,12 @@ async function loadConnector() {
     return import('../lib/whatsapp/connector');
 }
 
+function applyNoStore(res: Response): void {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+}
+
 /**
  * POST /api/whatsapp/connect — Start WhatsApp session
  */
@@ -24,9 +30,15 @@ router.post('/connect', whatsappRateLimiter, requireRole('owner', 'admin'), asyn
         const tenantId = req.auth!.tenantId;
         const { connectSession } = await loadConnector();
         await connectSession(tenantId);
-        res.json({ message: 'WhatsApp connection initiated', status: statusMonitor.getStatus(tenantId) });
+        const status = await getCanonicalWhatsAppStatus(tenantId);
+        applyNoStore(res);
+        res.json({ message: 'WhatsApp connection initiated', status });
     } catch (err: any) {
         logger.error({ error: err, tenantId: req.auth?.tenantId }, 'Failed to connect WhatsApp');
+        await setCanonicalWhatsAppState(req.auth!.tenantId, {
+            state: 'ERROR',
+            reason: 'Temporary WhatsApp login issue. Please try connecting again.',
+        }).catch(() => undefined);
         res.status(500).json({ error: 'Failed to connect WhatsApp' });
     }
 });
@@ -39,7 +51,9 @@ router.post('/disconnect', whatsappRateLimiter, requireRole('owner', 'admin'), a
         const tenantId = req.auth!.tenantId;
         const { disconnectSession } = await loadConnector();
         await disconnectSession(tenantId);
-        res.json({ message: 'WhatsApp disconnected' });
+        const status = await getCanonicalWhatsAppStatus(tenantId);
+        applyNoStore(res);
+        res.json({ message: 'WhatsApp disconnected', status });
     } catch (err: any) {
         logger.error({ error: err, tenantId: req.auth?.tenantId }, 'Failed to disconnect WhatsApp');
         res.status(500).json({ error: 'Failed to disconnect' });
@@ -50,8 +64,30 @@ router.post('/disconnect', whatsappRateLimiter, requireRole('owner', 'admin'), a
  * GET /api/whatsapp/status — Check connection status
  */
 router.get('/status', async (req: Request, res: Response) => {
-    const status = statusMonitor.getStatus(req.auth!.tenantId);
-    res.json({ status });
+    applyNoStore(res);
+    try {
+        const status = await getCanonicalWhatsAppStatus(req.auth!.tenantId);
+        res.json({
+            ...status,
+            serverTime: new Date().toISOString(),
+            tenantId: req.auth!.tenantId,
+        });
+    } catch (err: any) {
+        logger.error({ error: err, tenantId: req.auth?.tenantId }, 'Failed to resolve WhatsApp status');
+        res.json({
+            tenantId: req.auth!.tenantId,
+            sessionId: null,
+            state: 'ERROR',
+            qr: null,
+            reason: 'Temporary WhatsApp login issue. Please try again shortly.',
+            phoneNumber: null,
+            updatedAt: new Date().toISOString(),
+            lastSeenAt: null,
+            connectedAt: null,
+            disconnectedAt: null,
+            serverTime: new Date().toISOString(),
+        });
+    }
 });
 
 /**
@@ -59,13 +95,12 @@ router.get('/status', async (req: Request, res: Response) => {
  */
 router.get('/qr', async (req: Request, res: Response) => {
     try {
-        const tenantId = req.auth!.tenantId;
-        const { getQR } = await loadConnector();
-        const qr = getQR(tenantId);
-        if (!qr) {
+        applyNoStore(res);
+        const status = await getCanonicalWhatsAppStatus(req.auth!.tenantId);
+        if (status.state !== 'QR' || !status.qr) {
             return res.status(404).json({ error: 'No QR available. Connect first or QR already scanned.' });
         }
-        res.json({ qr });
+        res.json({ qr: status.qr, updatedAt: status.updatedAt, tenantId: req.auth!.tenantId });
     } catch (err: any) {
         logger.error({ error: err, tenantId: req.auth?.tenantId }, 'Failed to get QR code');
         res.status(500).json({ error: 'Failed to get QR code' });

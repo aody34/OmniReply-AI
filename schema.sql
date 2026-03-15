@@ -32,13 +32,28 @@ CREATE INDEX IF NOT EXISTS "User_tenantId_idx" ON "User"("tenantId");
 CREATE TABLE IF NOT EXISTS "WhatsAppSession" (
   "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   "tenantId" UUID NOT NULL UNIQUE REFERENCES "Tenant"("id") ON DELETE CASCADE,
+  "sessionId" TEXT DEFAULT 'primary',
   "phone" TEXT,
   "status" TEXT DEFAULT 'disconnected',
+  "state" TEXT DEFAULT 'DISCONNECTED',
+  "qr" TEXT,
+  "reason" TEXT,
   "lastActive" TIMESTAMPTZ,
+  "lastSeenAt" TIMESTAMPTZ,
+  "connectedAt" TIMESTAMPTZ,
+  "disconnectedAt" TIMESTAMPTZ,
   "createdAt" TIMESTAMPTZ DEFAULT NOW(),
   "updatedAt" TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS "WhatsAppSession_tenantId_idx" ON "WhatsAppSession"("tenantId");
+
+ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "sessionId" TEXT DEFAULT 'primary';
+ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "state" TEXT DEFAULT 'DISCONNECTED';
+ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "qr" TEXT;
+ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "reason" TEXT;
+ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "lastSeenAt" TIMESTAMPTZ;
+ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "connectedAt" TIMESTAMPTZ;
+ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "disconnectedAt" TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS "KnowledgeEntry" (
   "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,

@@ -6,7 +6,7 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth';
 import { requestDbMiddleware } from '../middleware/request-db';
 import { assertNoTenantOverride, TenantOverrideError } from '../lib/request-db';
-import { statusMonitor } from '../lib/whatsapp/status-monitor';
+import { getCanonicalWhatsAppStatus } from '../lib/whatsapp/session-state';
 
 const router = Router();
 router.use(authMiddleware);
@@ -81,7 +81,7 @@ router.get('/dashboard', async (req: Request, res: Response) => {
             db.from('Tenant').select('*').eq('id', tenantId).single(),
             db.from('DailyStat').select('*').eq('tenantId', tenantId).eq('date', today).single(),
             db.from('Lead').select('id', { count: 'exact' }).eq('tenantId', tenantId),
-            Promise.resolve(statusMonitor.getStatus(tenantId)),
+            getCanonicalWhatsAppStatus(tenantId),
         ]);
 
         const tenant = tenantRes.data;
