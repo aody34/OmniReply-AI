@@ -22,11 +22,31 @@ export function shouldAcceptStatusResponse(input: {
 export function getWhatsAppStatusView(status: WhatsAppStatusPayload | null) {
     return {
         isConnected: status?.state === 'CONNECTED',
-        isConnecting: status?.state === 'CONNECTING',
+        isConnecting: status?.state === 'CONNECTING' || status?.state === 'QR',
         isQrReady: status?.state === 'QR' && Boolean(status?.qr),
         isDisconnected: !status || status.state === 'DISCONNECTED',
         isError: status?.state === 'ERROR',
     };
+}
+
+export function shouldShowDisconnect(status: WhatsAppStatusPayload | null): boolean {
+    return status?.state === 'QR' || status?.state === 'CONNECTED';
+}
+
+export function shouldShowRetry(
+    status: WhatsAppStatusPayload | null,
+    waitingSinceMs: number | null,
+    nowMs = Date.now(),
+): boolean {
+    if (!status || waitingSinceMs === null) {
+        return false;
+    }
+
+    if (status.state !== 'CONNECTING' && !(status.state === 'QR' && !status.qr)) {
+        return false;
+    }
+
+    return nowMs - waitingSinceMs >= 10_000;
 }
 
 export function formatWhatsAppState(state: WhatsAppStatusPayload['state'] | undefined): string {

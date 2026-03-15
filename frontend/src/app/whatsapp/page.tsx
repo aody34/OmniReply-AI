@@ -6,13 +6,17 @@ import { api, WhatsAppStatusPayload } from '@/lib/api';
 import {
     formatWhatsAppState,
     getWhatsAppStatusView,
+    shouldShowDisconnect,
     shouldAcceptStatusResponse,
+    shouldShowRetry,
 } from '@/lib/whatsapp-status';
 
 export default function WhatsAppPage() {
     const [status, setStatus] = useState<WhatsAppStatusPayload | null>(null);
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
+    const [lastStatusFetchAt, setLastStatusFetchAt] = useState<string | null>(null);
+    const [waitingSinceMs, setWaitingSinceMs] = useState<number | null>(null);
     const abortRef = useRef<AbortController | null>(null);
     const requestIdRef = useRef(0);
     const latestAppliedRequestIdRef = useRef(0);
@@ -44,6 +48,7 @@ export default function WhatsAppPage() {
                 signal: controller.signal,
                 cache: 'no-store',
             });
+            setLastStatusFetchAt(new Date().toISOString());
             applyStatus(next, requestId);
         } catch (error: any) {
             if (controller.signal.aborted) {
@@ -59,21 +64,40 @@ export default function WhatsAppPage() {
 
     useEffect(() => {
         void pollStatus();
+    }, [pollStatus]);
+
+    useEffect(() => {
+        const shouldPoll = !status || status.state === 'CONNECTING' || status.state === 'QR';
+        if (!shouldPoll) {
+            return;
+        }
+
         const interval = window.setInterval(() => {
             void pollStatus();
-        }, 2500);
+        }, 2000);
 
         return () => {
             window.clearInterval(interval);
-            abortRef.current?.abort();
         };
-    }, [pollStatus]);
+    }, [pollStatus, status?.state]);
 
-    const handleConnect = async () => {
+    useEffect(() => {
+        const waitingForQr = !status || status.state === 'CONNECTING' || (status.state === 'QR' && !status.qr);
+        if (waitingForQr) {
+            setWaitingSinceMs((current) => current ?? Date.now());
+            return;
+        }
+
+        setWaitingSinceMs(null);
+    }, [status?.state, status?.qr]);
+
+    useEffect(() => () => abortRef.current?.abort(), []);
+
+    const handleConnect = async (force = false) => {
         setLoading(true);
         setMessage('');
         try {
-            const data = await api.whatsapp.connect();
+            const data = await api.whatsapp.connect(force ? { force: true } : undefined);
             setMessage(data.message);
             if (data.status) {
                 latestAppliedRequestIdRef.current = requestIdRef.current;
@@ -109,6 +133,8 @@ export default function WhatsAppPage() {
 
     const view = getWhatsAppStatusView(status);
     const stateLabel = formatWhatsAppState(status?.state);
+    const showDisconnect = shouldShowDisconnect(status);
+    const showRetry = shouldShowRetry(status, waitingSinceMs);
 
     return (
         <DashboardLayout>
@@ -146,13 +172,21 @@ export default function WhatsAppPage() {
                         )}
                     </div>
                     <div style={{ display: 'flex', gap: 12 }}>
-                        {status?.state === 'DISCONNECTED' || status?.state === 'ERROR' || !status ? (
-                            <button className="btn btn-primary" onClick={handleConnect} disabled={loading}>
-                                {loading ? <span className="loading-spinner" /> : 'Connect'}
-                            </button>
-                        ) : (
+                        {showDisconnect ? (
                             <button className="btn btn-danger" onClick={handleDisconnect} disabled={loading}>
                                 {loading ? <span className="loading-spinner" /> : 'Disconnect'}
+                            </button>
+                        ) : status?.state === 'DISCONNECTED' || status?.state === 'ERROR' || !status ? (
+                            <button className="btn btn-primary" onClick={() => handleConnect()} disabled={loading}>
+                                {loading ? <span className="loading-spinner" /> : 'Connect'}
+                            </button>
+                        ) : showRetry ? (
+                            <button className="btn btn-primary" onClick={() => handleConnect(true)} disabled={loading}>
+                                {loading ? <span className="loading-spinner" /> : 'Retry QR'}
+                            </button>
+                        ) : (
+                            <button className="btn btn-secondary" disabled>
+                                Waiting...
                             </button>
                         )}
                     </div>
@@ -202,12 +236,22 @@ export default function WhatsAppPage() {
                 </div>
             )}
 
-            {view.isConnecting && (
+            {view.isConnecting && !view.isQrReady && (
                 <div className="card" style={{ marginBottom: 24 }}>
-                    <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Connecting to WhatsApp</h3>
+                    <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Waiting for QR</h3>
                     <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
-                        Waiting for a WhatsApp connection event. The page will refresh automatically.
+                        Waiting for the backend to receive a QR event. The page refreshes automatically every 2 seconds.
                     </p>
+                    {showRetry && (
+                        <div style={{ marginTop: 16 }}>
+                            <p style={{ margin: '0 0 12px', color: 'var(--text-secondary)' }}>
+                                No QR arrived within 10 seconds. Try a fresh QR generation.
+                            </p>
+                            <button className="btn btn-primary" onClick={() => handleConnect(true)} disabled={loading}>
+                                {loading ? <span className="loading-spinner" /> : 'Retry QR'}
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -235,6 +279,9 @@ export default function WhatsAppPage() {
                     <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
                         <div><strong>state:</strong> {status?.state || 'DISCONNECTED'}</div>
                         <div><strong>updatedAt:</strong> {status?.updatedAt || '—'}</div>
+                        <div><strong>qrCreatedAt:</strong> {status?.qrCreatedAt || '—'}</div>
+                        <div><strong>qr present:</strong> {status?.qr ? 'true' : 'false'}</div>
+                        <div><strong>last status fetch:</strong> {lastStatusFetchAt || '—'}</div>
                         <div><strong>serverTime:</strong> {status?.serverTime || '—'}</div>
                         <div><strong>reason:</strong> {status?.reason || '—'}</div>
                     </div>

@@ -27,6 +27,7 @@ class StatusMonitor extends EventEmitter {
             sessionId: null,
             state: 'DISCONNECTED',
             qr: null,
+            qrCreatedAt: null,
             reason: null,
             phoneNumber: null,
             updatedAt: new Date(0).toISOString(),

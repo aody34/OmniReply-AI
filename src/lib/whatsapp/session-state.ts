@@ -9,6 +9,7 @@ type SessionRow = {
     state?: string | null;
     status?: string | null;
     qr?: string | null;
+    qrCreatedAt?: string | null;
     reason?: string | null;
     phone?: string | null;
     updatedAt?: string | null;
@@ -109,6 +110,7 @@ export function createDefaultWhatsAppStatus(tenantId: string, reason: string | n
         sessionId: null,
         state: 'DISCONNECTED',
         qr: null,
+        qrCreatedAt: null,
         reason,
         phoneNumber: null,
         updatedAt: DEFAULT_UPDATED_AT,
@@ -130,6 +132,7 @@ function normalizeRow(row: SessionRow | null | undefined, tenantId: string): Wha
         sessionId: row.sessionId || null,
         state,
         qr: row.qr || null,
+        qrCreatedAt: row.qrCreatedAt || null,
         reason: row.reason || null,
         phoneNumber: state === 'CONNECTED' ? row.phone || null : null,
         updatedAt: row.updatedAt || DEFAULT_UPDATED_AT,
@@ -143,6 +146,18 @@ function isMoreRecent(candidate: WhatsAppStatus, current: WhatsAppStatus): boole
     return Date.parse(candidate.updatedAt || DEFAULT_UPDATED_AT) > Date.parse(current.updatedAt || DEFAULT_UPDATED_AT);
 }
 
+function hasQrValue(status: WhatsAppStatus): boolean {
+    return status.state === 'QR' && Boolean(status.qr);
+}
+
+export function hasFreshQr(status: WhatsAppStatus, ttlMs = 55_000): boolean {
+    if (!hasQrValue(status) || !status.qrCreatedAt) {
+        return false;
+    }
+
+    return Date.now() - Date.parse(status.qrCreatedAt) <= ttlMs;
+}
+
 export function buildNextWhatsAppStatus(current: WhatsAppStatus, input: SessionTransitionInput): WhatsAppStatus {
     const updatedAt = input.updatedAt || new Date().toISOString();
     const next: WhatsAppStatus = {
@@ -151,6 +166,7 @@ export function buildNextWhatsAppStatus(current: WhatsAppStatus, input: SessionT
         sessionId: input.sessionId ?? current.sessionId ?? `${current.tenantId}:primary`,
         state: input.state,
         qr: input.qr ?? null,
+        qrCreatedAt: current.qrCreatedAt,
         reason: input.reason ?? null,
         phoneNumber: input.phoneNumber ?? current.phoneNumber ?? null,
         updatedAt,
@@ -163,15 +179,18 @@ export function buildNextWhatsAppStatus(current: WhatsAppStatus, input: SessionT
         case 'QR':
             next.phoneNumber = null;
             next.qr = input.qr ?? null;
+            next.qrCreatedAt = updatedAt;
             next.reason = null;
             break;
         case 'CONNECTING':
             next.phoneNumber = null;
             next.qr = null;
+            next.qrCreatedAt = null;
             next.reason = input.reason ?? null;
             break;
         case 'CONNECTED':
             next.qr = null;
+            next.qrCreatedAt = null;
             next.reason = null;
             next.phoneNumber = input.phoneNumber ?? current.phoneNumber ?? null;
             next.connectedAt = current.state === 'CONNECTED' && current.connectedAt ? current.connectedAt : updatedAt;
@@ -179,11 +198,13 @@ export function buildNextWhatsAppStatus(current: WhatsAppStatus, input: SessionT
         case 'DISCONNECTED':
             next.phoneNumber = null;
             next.qr = null;
+            next.qrCreatedAt = null;
             next.disconnectedAt = updatedAt;
             break;
         case 'ERROR':
             next.phoneNumber = null;
             next.qr = null;
+            next.qrCreatedAt = null;
             next.disconnectedAt = updatedAt;
             break;
     }
@@ -194,7 +215,7 @@ export function buildNextWhatsAppStatus(current: WhatsAppStatus, input: SessionT
 async function readStatusRow(tenantId: string): Promise<SessionRow | null> {
     const canonical = await supabase
         .from(TABLE_NAME)
-        .select('tenantId, sessionId, state, status, qr, reason, phone, updatedAt, lastSeenAt, connectedAt, disconnectedAt, lastActive')
+        .select('tenantId, sessionId, state, status, qr, qrCreatedAt, reason, phone, updatedAt, lastSeenAt, connectedAt, disconnectedAt, lastActive')
         .eq('tenantId', tenantId)
         .maybeSingle();
 
@@ -239,7 +260,16 @@ export async function getCanonicalWhatsAppStatus(tenantId: string): Promise<What
     }
 
     const fromDb = normalizeRow(await readStatusRow(tenantId), tenantId);
-    if (inMemory.updatedAt !== DEFAULT_UPDATED_AT && isMoreRecent(inMemory, fromDb)) {
+    const sameTimestamp = Date.parse(inMemory.updatedAt || DEFAULT_UPDATED_AT) === Date.parse(fromDb.updatedAt || DEFAULT_UPDATED_AT);
+    const shouldPreferInMemory =
+        inMemory.updatedAt !== DEFAULT_UPDATED_AT &&
+        (
+            isMoreRecent(inMemory, fromDb) ||
+            (sameTimestamp && Boolean(inMemory.qr) && !fromDb.qr) ||
+            (hasFreshQr(inMemory) && !hasFreshQr(fromDb))
+        );
+
+    if (shouldPreferInMemory) {
         return cacheStatus(inMemory);
     }
 
@@ -270,6 +300,7 @@ export async function setCanonicalWhatsAppState(tenantId: string, input: Session
         status: toLegacyStatus(next.state),
         state: next.state,
         qr: next.qr,
+        qrCreatedAt: next.qrCreatedAt,
         reason: next.reason,
         phone: next.phoneNumber,
         lastActive: next.lastSeenAt,
@@ -282,7 +313,7 @@ export async function setCanonicalWhatsAppState(tenantId: string, input: Session
     const canonical = await supabase
         .from(TABLE_NAME)
         .upsert(payload, { onConflict: 'tenantId' })
-        .select('tenantId, sessionId, state, status, qr, reason, phone, updatedAt, lastSeenAt, connectedAt, disconnectedAt, lastActive')
+        .select('tenantId, sessionId, state, status, qr, qrCreatedAt, reason, phone, updatedAt, lastSeenAt, connectedAt, disconnectedAt, lastActive')
         .single();
 
     if (!canonical.error) {
@@ -325,6 +356,7 @@ export async function setCanonicalWhatsAppState(tenantId: string, input: Session
         ...normalizeRow(legacy.data as SessionRow, tenantId),
         state: next.state,
         qr: next.qr,
+        qrCreatedAt: next.qrCreatedAt,
         reason: next.reason,
         sessionId: next.sessionId,
         connectedAt: next.connectedAt,

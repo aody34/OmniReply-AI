@@ -23,6 +23,7 @@ export interface WhatsAppStatus {
     sessionId: string | null;
     state: WhatsAppSessionState;
     qr: string | null;
+    qrCreatedAt: string | null;
     reason: string | null;
     phoneNumber: string | null;
     updatedAt: string;

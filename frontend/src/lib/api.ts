@@ -21,6 +21,7 @@ export type WhatsAppStatusPayload = {
     sessionId: string | null;
     state: WhatsAppState;
     qr: string | null;
+    qrCreatedAt: string | null;
     reason: string | null;
     phoneNumber: string | null;
     updatedAt: string;
@@ -146,10 +147,14 @@ export const api = {
     },
 
     whatsapp: {
-        connect: () => request<{ message: string; status: WhatsAppStatusPayload }>('/api/whatsapp/connect', { method: 'POST' }),
+        connect: (body?: { force?: boolean }) =>
+            request<{ message: string; status: WhatsAppStatusPayload }>('/api/whatsapp/connect', {
+                method: 'POST',
+                body: JSON.stringify(body || {}),
+            }),
         disconnect: () => request<{ message: string; status: WhatsAppStatusPayload }>('/api/whatsapp/disconnect', { method: 'POST' }),
         status: (options: RequestInit = {}) => request<WhatsAppStatusPayload>('/api/whatsapp/status', options),
-        qr: () => request<{ qr: string; updatedAt: string; tenantId: string }>('/api/whatsapp/qr'),
+        qr: () => request<{ qr: string; updatedAt: string; qrCreatedAt: string | null; tenantId: string }>('/api/whatsapp/qr'),
     },
 
     knowledge: {

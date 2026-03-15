@@ -2,6 +2,7 @@ ALTER TABLE "WhatsAppSession"
   ADD COLUMN IF NOT EXISTS "sessionId" TEXT DEFAULT 'primary',
   ADD COLUMN IF NOT EXISTS "state" TEXT DEFAULT 'DISCONNECTED',
   ADD COLUMN IF NOT EXISTS "qr" TEXT,
+  ADD COLUMN IF NOT EXISTS "qrCreatedAt" TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS "reason" TEXT,
   ADD COLUMN IF NOT EXISTS "lastSeenAt" TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS "connectedAt" TIMESTAMPTZ,
@@ -19,6 +20,11 @@ WHERE "state" IS NULL OR "state" = 'DISCONNECTED';
 
 UPDATE "WhatsAppSession"
 SET "sessionId" = COALESCE("sessionId", 'primary'),
+    "qrCreatedAt" = CASE
+      WHEN "qrCreatedAt" IS NOT NULL THEN "qrCreatedAt"
+      WHEN "state" = 'QR' THEN COALESCE("updatedAt", NOW())
+      ELSE NULL
+    END,
     "lastSeenAt" = COALESCE("lastSeenAt", "lastActive"),
     "connectedAt" = CASE
       WHEN "connectedAt" IS NOT NULL THEN "connectedAt"

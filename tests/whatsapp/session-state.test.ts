@@ -21,8 +21,10 @@ describe('WhatsApp session state machine', () => {
             updatedAt: '2026-03-15T10:01:00.000Z',
         });
 
+        expect(initial.qrCreatedAt).toBe('2026-03-15T10:00:00.000Z');
         expect(next.state).toBe('CONNECTED');
         expect(next.qr).toBeNull();
+        expect(next.qrCreatedAt).toBeNull();
         expect(next.phoneNumber).toBe('252612345678');
         expect(next.connectedAt).toBe('2026-03-15T10:01:00.000Z');
     });

@@ -5,7 +5,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth';
 import { createWhatsAppRateLimiter } from '../middleware/rate-limit';
-import { getCanonicalWhatsAppStatus, setCanonicalWhatsAppState } from '../lib/whatsapp/session-state';
+import { getCanonicalWhatsAppStatus, hasFreshQr, setCanonicalWhatsAppState } from '../lib/whatsapp/session-state';
 import logger from '../lib/utils/logger';
 
 const router = Router();
@@ -28,9 +28,22 @@ function applyNoStore(res: Response): void {
 router.post('/connect', whatsappRateLimiter, requireRole('owner', 'admin'), async (req: Request, res: Response) => {
     try {
         const tenantId = req.auth!.tenantId;
-        const { connectSession } = await loadConnector();
-        await connectSession(tenantId);
-        const status = await getCanonicalWhatsAppStatus(tenantId);
+        const force = Boolean(req.body?.force);
+        const { connectSession, refreshQrSession } = await loadConnector();
+        let status = await getCanonicalWhatsAppStatus(tenantId);
+
+        if (force) {
+            await refreshQrSession(tenantId);
+        } else if (hasFreshQr(status)) {
+            applyNoStore(res);
+            return res.json({ message: 'WhatsApp QR available', status });
+        } else if (status.state === 'QR' && !hasFreshQr(status)) {
+            await refreshQrSession(tenantId);
+        } else {
+            await connectSession(tenantId);
+        }
+
+        status = await getCanonicalWhatsAppStatus(tenantId);
         applyNoStore(res);
         res.json({ message: 'WhatsApp connection initiated', status });
     } catch (err: any) {
@@ -66,11 +79,23 @@ router.post('/disconnect', whatsappRateLimiter, requireRole('owner', 'admin'), a
 router.get('/status', async (req: Request, res: Response) => {
     applyNoStore(res);
     try {
-        const status = await getCanonicalWhatsAppStatus(req.auth!.tenantId);
+        const tenantId = req.auth!.tenantId;
+        const status = await getCanonicalWhatsAppStatus(tenantId);
+        if (status.state === 'QR' && !hasFreshQr(status)) {
+            const { refreshQrSession } = await loadConnector();
+            await refreshQrSession(tenantId);
+            const refreshed = await getCanonicalWhatsAppStatus(tenantId);
+            return res.json({
+                ...refreshed,
+                serverTime: new Date().toISOString(),
+                tenantId,
+            });
+        }
+
         res.json({
             ...status,
             serverTime: new Date().toISOString(),
-            tenantId: req.auth!.tenantId,
+            tenantId,
         });
     } catch (err: any) {
         logger.error({ error: err, tenantId: req.auth?.tenantId }, 'Failed to resolve WhatsApp status');
@@ -79,6 +104,7 @@ router.get('/status', async (req: Request, res: Response) => {
             sessionId: null,
             state: 'ERROR',
             qr: null,
+            qrCreatedAt: null,
             reason: 'Temporary WhatsApp login issue. Please try again shortly.',
             phoneNumber: null,
             updatedAt: new Date().toISOString(),
@@ -100,7 +126,7 @@ router.get('/qr', async (req: Request, res: Response) => {
         if (status.state !== 'QR' || !status.qr) {
             return res.status(404).json({ error: 'No QR available. Connect first or QR already scanned.' });
         }
-        res.json({ qr: status.qr, updatedAt: status.updatedAt, tenantId: req.auth!.tenantId });
+        res.json({ qr: status.qr, updatedAt: status.updatedAt, qrCreatedAt: status.qrCreatedAt, tenantId: req.auth!.tenantId });
     } catch (err: any) {
         logger.error({ error: err, tenantId: req.auth?.tenantId }, 'Failed to get QR code');
         res.status(500).json({ error: 'Failed to get QR code' });

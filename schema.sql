@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS "WhatsAppSession" (
   "status" TEXT DEFAULT 'disconnected',
   "state" TEXT DEFAULT 'DISCONNECTED',
   "qr" TEXT,
+  "qrCreatedAt" TIMESTAMPTZ,
   "reason" TEXT,
   "lastActive" TIMESTAMPTZ,
   "lastSeenAt" TIMESTAMPTZ,
@@ -50,6 +51,7 @@ CREATE INDEX IF NOT EXISTS "WhatsAppSession_tenantId_idx" ON "WhatsAppSession"("
 ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "sessionId" TEXT DEFAULT 'primary';
 ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "state" TEXT DEFAULT 'DISCONNECTED';
 ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "qr" TEXT;
+ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "qrCreatedAt" TIMESTAMPTZ;
 ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "reason" TEXT;
 ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "lastSeenAt" TIMESTAMPTZ;
 ALTER TABLE "WhatsAppSession" ADD COLUMN IF NOT EXISTS "connectedAt" TIMESTAMPTZ;

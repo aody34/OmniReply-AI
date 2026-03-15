@@ -146,6 +146,7 @@ model WhatsAppSession {
   status         String?   @default("disconnected")
   state          String?   @default("DISCONNECTED")
   qr             String?
+  qrCreatedAt    DateTime? @db.Timestamptz(6)
   reason         String?
   lastActive     DateTime? @db.Timestamptz(6)
   lastSeenAt     DateTime? @db.Timestamptz(6)

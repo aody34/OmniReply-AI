@@ -20,13 +20,17 @@ import {
     setLeadHumanOverride,
 } from '../automation/pending-replies';
 import { recordTenantManualReplyActivity } from '../automation/owner-activity';
-import { getCanonicalWhatsAppStatus, setCanonicalWhatsAppState } from './session-state';
+import { getCanonicalWhatsAppStatus, hasFreshQr, setCanonicalWhatsAppState } from './session-state';
 
 const liveSockets: Map<string, WASocket> = new Map();
 const activeSockets: Map<string, WASocket> = new Map();
 const pendingConnections: Map<string, Promise<void>> = new Map();
 const reconnectTimers: Map<string, NodeJS.Timeout> = new Map();
 const manualDisconnects: Set<string> = new Set();
+const qrRefreshLocks: Set<string> = new Set();
+const qrRefreshingTenants: Set<string> = new Set();
+const qrRefreshAttempts: Map<string, number> = new Map();
+const MAX_QR_REFRESH_ATTEMPTS = 2;
 
 function clearReconnectTimer(tenantId: string): void {
     const timer = reconnectTimers.get(tenantId);
@@ -45,6 +49,10 @@ function scheduleReconnect(tenantId: string): void {
         });
     }, 5000);
     reconnectTimers.set(tenantId, timer);
+}
+
+function resetQrRefreshAttempts(tenantId: string): void {
+    qrRefreshAttempts.delete(tenantId);
 }
 
 function isAuthFailure(statusCode?: number): boolean {
@@ -78,6 +86,7 @@ function getDisconnectReason(statusCode?: number): string {
 
 async function markConnected(tenantId: string, socket: WASocket): Promise<void> {
     const phoneNumber = socket.user?.id?.split(':')[0] || null;
+    resetQrRefreshAttempts(tenantId);
     await setCanonicalWhatsAppState(tenantId, {
         state: 'CONNECTED',
         phoneNumber,
@@ -93,9 +102,20 @@ async function handleSocketClose(tenantId: string, lastDisconnect: unknown): Pro
 
     const statusCode = (lastDisconnect as Boom | undefined)?.output?.statusCode;
 
+    if (qrRefreshingTenants.has(tenantId)) {
+        qrRefreshingTenants.delete(tenantId);
+        clearReconnectTimer(tenantId);
+        await setCanonicalWhatsAppState(tenantId, {
+            state: 'CONNECTING',
+            reason: 'Refreshing QR code...',
+        });
+        return;
+    }
+
     if (manualDisconnects.has(tenantId)) {
         manualDisconnects.delete(tenantId);
         clearReconnectTimer(tenantId);
+        resetQrRefreshAttempts(tenantId);
         await setCanonicalWhatsAppState(tenantId, {
             state: 'DISCONNECTED',
             reason: 'Disconnected by user.',
@@ -105,6 +125,7 @@ async function handleSocketClose(tenantId: string, lastDisconnect: unknown): Pro
 
     if (statusCode === DisconnectReason.loggedOut) {
         clearReconnectTimer(tenantId);
+        resetQrRefreshAttempts(tenantId);
         await sessionStore.deleteSession(tenantId);
         await setCanonicalWhatsAppState(tenantId, {
             state: 'DISCONNECTED',
@@ -115,6 +136,7 @@ async function handleSocketClose(tenantId: string, lastDisconnect: unknown): Pro
 
     if (isAuthFailure(statusCode)) {
         clearReconnectTimer(tenantId);
+        resetQrRefreshAttempts(tenantId);
         await sessionStore.deleteSession(tenantId);
         await setCanonicalWhatsAppState(tenantId, {
             state: 'ERROR',
@@ -142,6 +164,13 @@ export function getActiveSocket(tenantId: string): WASocket | null {
  * Connect a WhatsApp session for a tenant.
  */
 export async function connectSession(tenantId: string): Promise<void> {
+    return connectSessionWithOptions(tenantId, {});
+}
+
+async function connectSessionWithOptions(
+    tenantId: string,
+    options: { forceFreshAuth?: boolean },
+): Promise<void> {
     if (liveSockets.has(tenantId)) {
         logger.info({ tenantId }, 'WhatsApp session already starting or active');
         return;
@@ -165,7 +194,7 @@ export async function connectSession(tenantId: string): Promise<void> {
         // A user-initiated reconnect after DISCONNECTED/ERROR should always start from
         // a fresh auth state so the backend emits a new QR instead of silently reusing
         // stale credentials and showing a dead "connecting" loop.
-        if (current && (current.state === 'DISCONNECTED' || current.state === 'ERROR')) {
+        if (options.forceFreshAuth || (current && (current.state === 'DISCONNECTED' || current.state === 'ERROR'))) {
             await sessionStore.deleteSession(tenantId).catch((error) => {
                 logger.warn({ error, tenantId }, 'Failed to clear stored WhatsApp auth state before reconnect');
             });
@@ -198,12 +227,13 @@ export async function connectSession(tenantId: string): Promise<void> {
 
             try {
                 if (qr) {
+                    resetQrRefreshAttempts(tenantId);
                     await setCanonicalWhatsAppState(tenantId, {
                         state: 'QR',
                         qr,
                         reason: null,
                     });
-                    logger.info({ tenantId }, 'WhatsApp QR generated');
+                    logger.info({ tenantId, qrLength: qr.length }, 'WhatsApp QR generated');
                 }
 
                 if (connection === 'connecting') {
@@ -288,6 +318,7 @@ export async function connectSession(tenantId: string): Promise<void> {
 export async function disconnectSession(tenantId: string): Promise<void> {
     manualDisconnects.add(tenantId);
     clearReconnectTimer(tenantId);
+    resetQrRefreshAttempts(tenantId);
 
     const socket = liveSockets.get(tenantId) || activeSockets.get(tenantId);
     if (socket) {
@@ -305,6 +336,59 @@ export async function disconnectSession(tenantId: string): Promise<void> {
         state: 'DISCONNECTED',
         reason: 'Disconnected by user.',
     });
+}
+
+export async function refreshQrSession(tenantId: string): Promise<void> {
+    if (qrRefreshLocks.has(tenantId)) {
+        return;
+    }
+
+    qrRefreshLocks.add(tenantId);
+
+    try {
+        const current = await getCanonicalWhatsAppStatus(tenantId).catch(() => null);
+        if (current && hasFreshQr(current)) {
+            return;
+        }
+
+        const attempts = (qrRefreshAttempts.get(tenantId) || 0) + 1;
+        qrRefreshAttempts.set(tenantId, attempts);
+
+        if (attempts > MAX_QR_REFRESH_ATTEMPTS) {
+            await setCanonicalWhatsAppState(tenantId, {
+                state: 'ERROR',
+                reason: 'QR code expired repeatedly. Click Retry to generate a fresh code.',
+            });
+            return;
+        }
+
+        const socket = liveSockets.get(tenantId) || activeSockets.get(tenantId);
+        clearReconnectTimer(tenantId);
+        if (socket) {
+            qrRefreshingTenants.add(tenantId);
+        }
+
+        if (socket) {
+            try {
+                socket.end(new Error('Refreshing QR code'));
+            } catch (error) {
+                logger.warn({ error, tenantId }, 'Failed to terminate WhatsApp socket while refreshing QR');
+            }
+        }
+
+        liveSockets.delete(tenantId);
+        activeSockets.delete(tenantId);
+        await sessionStore.deleteSession(tenantId).catch((error) => {
+            logger.warn({ error, tenantId }, 'Failed to clear WhatsApp auth state while refreshing QR');
+        });
+        await setCanonicalWhatsAppState(tenantId, {
+            state: 'CONNECTING',
+            reason: 'Refreshing QR code...',
+        });
+        await connectSessionWithOptions(tenantId, { forceFreshAuth: true });
+    } finally {
+        qrRefreshLocks.delete(tenantId);
+    }
 }
 
 /**
