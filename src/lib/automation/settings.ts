@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import supabase from '../db';
+import logger from '../utils/logger';
 import {
     AUTO_REPLY_MODES,
     DEFAULT_AUTOMATION_SETTINGS,
@@ -22,6 +23,31 @@ export const tenantAutomationSettingsSchema = z.object({
     humanOverrideMinutes: z.number().int().min(1).default(DEFAULT_AUTOMATION_SETTINGS.humanOverrideMinutes),
 });
 
+let loggedSettingsFallback = false;
+
+function isSchemaMismatchError(error: { code?: string; message?: string; details?: string; hint?: string } | null | undefined): boolean {
+    const code = (error?.code || '').toUpperCase();
+    const text = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+
+    return (
+        code === '42703' ||
+        code === '42P01' ||
+        code === 'PGRST204' ||
+        code === 'PGRST205' ||
+        text.includes('could not find the') ||
+        text.includes('schema cache') ||
+        text.includes('column') ||
+        text.includes('relation') ||
+        text.includes('does not exist')
+    );
+}
+
+function logFallback(error: { code?: string; message?: string }): void {
+    if (loggedSettingsFallback) return;
+    loggedSettingsFallback = true;
+    logger.warn({ code: error.code, message: error.message }, 'TenantAutomationSettings schema unavailable; using default automation settings until migration is applied');
+}
+
 function normalizeRow(row: any): TenantAutomationSettings {
     return tenantAutomationSettingsSchema.parse({
         autoReplyMode: row?.autoReplyMode,
@@ -41,6 +67,10 @@ export async function getTenantAutomationSettings(tenantId: string): Promise<Ten
         .maybeSingle();
 
     if (error) {
+        if (isSchemaMismatchError(error)) {
+            logFallback(error);
+            return DEFAULT_AUTOMATION_SETTINGS;
+        }
         throw error;
     }
 
@@ -70,6 +100,10 @@ export async function upsertTenantAutomationSettings(
         .single();
 
     if (error) {
+        if (isSchemaMismatchError(error)) {
+            logFallback(error);
+            return parsed;
+        }
         throw error;
     }
 

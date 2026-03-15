@@ -304,13 +304,24 @@ export async function disconnectSession(tenantId: string): Promise<void> {
 export async function reconnectAllSessions(): Promise<void> {
     try {
         const supabase = (await import('../db')).default;
-        const { data: sessions, error } = await supabase
+        const canonical = await supabase
             .from('WhatsAppSession')
             .select('tenantId, state, status')
             .or('state.eq.CONNECTED,status.eq.connected');
 
-        if (error) {
-            throw error;
+        let sessions: Array<{ tenantId: string; state?: string | null; status?: string | null }> | null = canonical.data as Array<{ tenantId: string; state?: string | null; status?: string | null }> | null;
+
+        if (canonical.error) {
+            const fallback = await supabase
+                .from('WhatsAppSession')
+                .select('tenantId, status')
+                .eq('status', 'connected');
+
+            if (fallback.error) {
+                throw fallback.error;
+            }
+
+            sessions = (fallback.data as Array<{ tenantId: string; status?: string | null }> | null) || null;
         }
 
         if (!sessions || sessions.length === 0) {

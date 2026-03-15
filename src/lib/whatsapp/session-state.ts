@@ -29,6 +29,15 @@ type SessionTransitionInput = {
 
 const TABLE_NAME = 'WhatsAppSession';
 const DEFAULT_UPDATED_AT = new Date(0).toISOString();
+let loggedCanonicalSchemaFallback = false;
+let loggedLegacySchemaFallback = false;
+
+type DbErrorLike = {
+    code?: string;
+    message?: string;
+    details?: string;
+    hint?: string;
+};
 
 function parseState(value?: string | null): WhatsAppSessionState {
     switch ((value || '').toUpperCase()) {
@@ -62,6 +71,36 @@ function toLegacyStatus(state: WhatsAppSessionState): string {
         default:
             return 'disconnected';
     }
+}
+
+function isSchemaMismatchError(error: DbErrorLike | null | undefined): boolean {
+    const code = (error?.code || '').toUpperCase();
+    const text = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+
+    return (
+        code === '42703' ||
+        code === '42P01' ||
+        code === 'PGRST204' ||
+        code === 'PGRST205' ||
+        text.includes('could not find the') ||
+        text.includes('schema cache') ||
+        text.includes('column') ||
+        text.includes('relation') ||
+        text.includes('does not exist')
+    );
+}
+
+function logSchemaFallback(kind: 'canonical' | 'legacy', error: DbErrorLike): void {
+    if (kind === 'canonical') {
+        if (loggedCanonicalSchemaFallback) return;
+        loggedCanonicalSchemaFallback = true;
+        logger.warn({ code: error.code, message: error.message }, 'WhatsApp session canonical columns unavailable; using legacy DB fallback');
+        return;
+    }
+
+    if (loggedLegacySchemaFallback) return;
+    loggedLegacySchemaFallback = true;
+    logger.warn({ code: error.code, message: error.message }, 'WhatsApp session table unavailable; using in-memory fallback only');
 }
 
 export function createDefaultWhatsAppStatus(tenantId: string, reason: string | null = null): WhatsAppStatus {
@@ -146,17 +185,38 @@ export function buildNextWhatsAppStatus(current: WhatsAppStatus, input: SessionT
 }
 
 async function readStatusRow(tenantId: string): Promise<SessionRow | null> {
-    const { data, error } = await supabase
+    const canonical = await supabase
         .from(TABLE_NAME)
         .select('tenantId, sessionId, state, status, qr, reason, phone, updatedAt, lastSeenAt, connectedAt, disconnectedAt, lastActive')
         .eq('tenantId', tenantId)
         .maybeSingle();
 
-    if (error) {
-        throw error;
+    if (!canonical.error) {
+        return (canonical.data as SessionRow | null) || null;
     }
 
-    return (data as SessionRow | null) || null;
+    if (!isSchemaMismatchError(canonical.error)) {
+        throw canonical.error;
+    }
+
+    logSchemaFallback('canonical', canonical.error);
+
+    const legacy = await supabase
+        .from(TABLE_NAME)
+        .select('tenantId, phone, status, updatedAt, lastActive')
+        .eq('tenantId', tenantId)
+        .maybeSingle();
+
+    if (!legacy.error) {
+        return (legacy.data as SessionRow | null) || null;
+    }
+
+    if (isSchemaMismatchError(legacy.error)) {
+        logSchemaFallback('legacy', legacy.error);
+        return null;
+    }
+
+    throw legacy.error;
 }
 
 function cacheStatus(status: WhatsAppStatus): WhatsAppStatus {
@@ -212,16 +272,55 @@ export async function setCanonicalWhatsAppState(tenantId: string, input: Session
         updatedAt: next.updatedAt,
     };
 
-    const { data, error } = await supabase
+    const canonical = await supabase
         .from(TABLE_NAME)
         .upsert(payload, { onConflict: 'tenantId' })
         .select('tenantId, sessionId, state, status, qr, reason, phone, updatedAt, lastSeenAt, connectedAt, disconnectedAt, lastActive')
         .single();
 
-    if (error) {
-        logger.error({ error, tenantId, attemptedState: next.state }, 'Failed to persist WhatsApp session state');
-        throw error;
+    if (!canonical.error) {
+        return cacheStatus(normalizeRow(canonical.data as SessionRow, tenantId));
     }
 
-    return cacheStatus(normalizeRow(data as SessionRow, tenantId));
+    if (!isSchemaMismatchError(canonical.error)) {
+        logger.error({ error: canonical.error, tenantId, attemptedState: next.state }, 'Failed to persist WhatsApp session state');
+        throw canonical.error;
+    }
+
+    logSchemaFallback('canonical', canonical.error);
+
+    const legacyPayload = {
+        tenantId,
+        phone: next.phoneNumber,
+        status: toLegacyStatus(next.state),
+        lastActive: next.lastSeenAt,
+        updatedAt: next.updatedAt,
+    };
+
+    const legacy = await supabase
+        .from(TABLE_NAME)
+        .upsert(legacyPayload, { onConflict: 'tenantId' })
+        .select('tenantId, phone, status, updatedAt, lastActive')
+        .single();
+
+    if (legacy.error) {
+        if (isSchemaMismatchError(legacy.error)) {
+            logSchemaFallback('legacy', legacy.error);
+            return cacheStatus(next);
+        }
+
+        logger.error({ error: legacy.error, tenantId, attemptedState: next.state }, 'Failed to persist legacy WhatsApp session state');
+        throw legacy.error;
+    }
+
+    return cacheStatus({
+        ...next,
+        ...normalizeRow(legacy.data as SessionRow, tenantId),
+        state: next.state,
+        qr: next.qr,
+        reason: next.reason,
+        sessionId: next.sessionId,
+        connectedAt: next.connectedAt,
+        disconnectedAt: next.disconnectedAt,
+    });
 }

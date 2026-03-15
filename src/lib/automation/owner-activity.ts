@@ -1,9 +1,35 @@
 import supabase from '../db';
+import logger from '../utils/logger';
 
 export type OwnerActivityStatus = {
     lastActiveAt: string | null;
     offline: boolean;
 };
+
+let loggedOwnerActivityFallback = false;
+
+function isSchemaMismatchError(error: { code?: string; message?: string; details?: string; hint?: string } | null | undefined): boolean {
+    const code = (error?.code || '').toUpperCase();
+    const text = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+
+    return (
+        code === '42703' ||
+        code === '42P01' ||
+        code === 'PGRST204' ||
+        code === 'PGRST205' ||
+        text.includes('could not find the') ||
+        text.includes('schema cache') ||
+        text.includes('column') ||
+        text.includes('relation') ||
+        text.includes('does not exist')
+    );
+}
+
+function logFallback(error: { code?: string; message?: string }): void {
+    if (loggedOwnerActivityFallback) return;
+    loggedOwnerActivityFallback = true;
+    logger.warn({ code: error.code, message: error.message }, 'OwnerActivity schema unavailable; heartbeat tracking disabled until migration is applied');
+}
 
 export async function recordOwnerHeartbeat(
     tenantId: string,
@@ -24,6 +50,10 @@ export async function recordOwnerHeartbeat(
         }, { onConflict: 'tenantId,userId' });
 
     if (error) {
+        if (isSchemaMismatchError(error)) {
+            logFallback(error);
+            return;
+        }
         throw error;
     }
 }
@@ -45,6 +75,10 @@ export async function recordManualReplyActivity(
         }, { onConflict: 'tenantId,userId' });
 
     if (error) {
+        if (isSchemaMismatchError(error)) {
+            logFallback(error);
+            return;
+        }
         throw error;
     }
 }
@@ -60,6 +94,10 @@ export async function recordTenantManualReplyActivity(tenantId: string): Promise
         .maybeSingle();
 
     if (error) {
+        if (isSchemaMismatchError(error)) {
+            logFallback(error);
+            return;
+        }
         throw error;
     }
 
@@ -100,6 +138,13 @@ export async function getOwnerActivityStatus(
         .maybeSingle();
 
     if (error) {
+        if (isSchemaMismatchError(error)) {
+            logFallback(error);
+            return {
+                lastActiveAt: null,
+                offline: true,
+            };
+        }
         throw error;
     }
 
