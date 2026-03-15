@@ -123,13 +123,15 @@ function normalizeRow(row: SessionRow | null | undefined, tenantId: string): Wha
         return createDefaultWhatsAppStatus(tenantId);
     }
 
+    const state = parseState(row.state || row.status);
+
     return {
         tenantId,
         sessionId: row.sessionId || null,
-        state: parseState(row.state || row.status),
+        state,
         qr: row.qr || null,
         reason: row.reason || null,
-        phoneNumber: row.phone || null,
+        phoneNumber: state === 'CONNECTED' ? row.phone || null : null,
         updatedAt: row.updatedAt || DEFAULT_UPDATED_AT,
         lastSeenAt: row.lastSeenAt || row.lastActive || null,
         connectedAt: row.connectedAt || null,
@@ -159,23 +161,28 @@ export function buildNextWhatsAppStatus(current: WhatsAppStatus, input: SessionT
 
     switch (input.state) {
         case 'QR':
+            next.phoneNumber = null;
             next.qr = input.qr ?? null;
             next.reason = null;
             break;
         case 'CONNECTING':
+            next.phoneNumber = null;
             next.qr = null;
             next.reason = input.reason ?? null;
             break;
         case 'CONNECTED':
             next.qr = null;
             next.reason = null;
+            next.phoneNumber = input.phoneNumber ?? current.phoneNumber ?? null;
             next.connectedAt = current.state === 'CONNECTED' && current.connectedAt ? current.connectedAt : updatedAt;
             break;
         case 'DISCONNECTED':
+            next.phoneNumber = null;
             next.qr = null;
             next.disconnectedAt = updatedAt;
             break;
         case 'ERROR':
+            next.phoneNumber = null;
             next.qr = null;
             next.disconnectedAt = updatedAt;
             break;

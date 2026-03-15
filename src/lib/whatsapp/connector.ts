@@ -162,6 +162,15 @@ export async function connectSession(tenantId: string): Promise<void> {
             return;
         }
 
+        // A user-initiated reconnect after DISCONNECTED/ERROR should always start from
+        // a fresh auth state so the backend emits a new QR instead of silently reusing
+        // stale credentials and showing a dead "connecting" loop.
+        if (current && (current.state === 'DISCONNECTED' || current.state === 'ERROR')) {
+            await sessionStore.deleteSession(tenantId).catch((error) => {
+                logger.warn({ error, tenantId }, 'Failed to clear stored WhatsApp auth state before reconnect');
+            });
+        }
+
         await setCanonicalWhatsAppState(tenantId, {
             state: 'CONNECTING',
             reason: null,
