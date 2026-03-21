@@ -81,6 +81,7 @@ async function replaceFlowChildren(tenantId: string, flowId: string, payload: z.
         flowId,
         tenantId,
         type: payload.trigger.type,
+        value: payload.trigger.config || null,
         config: payload.trigger.config || null,
         updatedAt: new Date().toISOString(),
     };

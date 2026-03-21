@@ -3,10 +3,11 @@ import { authMiddleware, requireRole } from '../middleware/auth';
 import { assertNoTenantOverride, TenantOverrideError } from '../lib/request-db';
 import {
     DEFAULT_AUTOMATION_SETTINGS,
+    getTenantAutomationSettings,
     tenantAutomationSettingsSchema,
+    upsertTenantAutomationSettings,
 } from '../lib/automation/settings';
 import { getOwnerActivityStatus } from '../lib/automation/owner-activity';
-import supabase from '../lib/db';
 import logger from '../lib/utils/logger';
 import { getRouteRequestContext, getSafeErrorDetails, sendRouteError } from '../lib/utils/route-response';
 
@@ -24,19 +25,7 @@ router.get('/', async (req: Request, res: Response) => {
         logger.info({ ...ctx, hasUser: Boolean(ctx.userId), hasTenant: Boolean(ctx.tenantId) }, 'Handling automation settings fetch');
 
         const tenantId = req.auth.tenantId;
-        const { data, error } = await supabase
-            .from('TenantAutomationSettings')
-            .select('*')
-            .eq('tenantId', tenantId)
-            .maybeSingle();
-
-        if (error) {
-            throw error;
-        }
-
-        const settings = data
-            ? tenantAutomationSettingsSchema.parse(data)
-            : DEFAULT_AUTOMATION_SETTINGS;
+        const settings = await getTenantAutomationSettings(tenantId);
         const activity = await getOwnerActivityStatus(tenantId, settings.offlineGraceMinutes);
 
         res.json({
@@ -62,23 +51,11 @@ router.put('/', requireRole('owner', 'admin'), async (req: Request, res: Respons
         assertNoTenantOverride(req.body);
 
         const parsed = tenantAutomationSettingsSchema.parse(req.body);
-        const { data, error } = await supabase
-            .from('TenantAutomationSettings')
-            .upsert({
-                tenantId,
-                ...parsed,
-                updatedAt: new Date().toISOString(),
-            }, { onConflict: 'tenantId' })
-            .select('*')
-            .single();
-
-        if (error) {
-            throw error;
-        }
+        const data = await upsertTenantAutomationSettings(tenantId, parsed);
 
         res.json({
             message: 'Automation settings updated',
-            settings: tenantAutomationSettingsSchema.parse(data),
+            settings: tenantAutomationSettingsSchema.parse(data || DEFAULT_AUTOMATION_SETTINGS),
         });
     } catch (error) {
         if (error instanceof TenantOverrideError) {

@@ -54,8 +54,8 @@ function normalizeRow(row: any): TenantAutomationSettings {
         replyDelayMinutes: row?.replyDelayMinutes,
         offlineGraceMinutes: row?.offlineGraceMinutes,
         workingHours: row?.workingHours,
-        enableHumanOverride: row?.enableHumanOverride,
-        humanOverrideMinutes: row?.humanOverrideMinutes,
+        enableHumanOverride: row?.enableHumanOverride ?? row?.pauseOnHumanReply,
+        humanOverrideMinutes: row?.humanOverrideMinutes ?? row?.humanOverridePauseMinutes,
     });
 }
 
@@ -101,8 +101,29 @@ export async function upsertTenantAutomationSettings(
 
     if (error) {
         if (isSchemaMismatchError(error)) {
-            logFallback(error);
-            return parsed;
+            const legacyPayload = {
+                tenantId,
+                autoReplyMode: parsed.autoReplyMode,
+                replyDelayMinutes: parsed.replyDelayMinutes,
+                offlineGraceMinutes: parsed.offlineGraceMinutes,
+                workingHours: parsed.workingHours,
+                pauseOnHumanReply: parsed.enableHumanOverride,
+                humanOverridePauseMinutes: parsed.humanOverrideMinutes,
+                updatedAt: new Date().toISOString(),
+            };
+
+            const legacyRes = await supabase
+                .from('TenantAutomationSettings')
+                .upsert(legacyPayload, { onConflict: 'tenantId' })
+                .select('*')
+                .single();
+
+            if (legacyRes.error) {
+                logFallback(error);
+                return parsed;
+            }
+
+            return normalizeRow(legacyRes.data);
         }
         throw error;
     }

@@ -16,6 +16,7 @@ import { createCorsOptions, resolveAllowedOrigins } from './lib/cors';
 import logger from './lib/utils/logger';
 import { isDbConfigured } from './lib/db';
 import { isRequestDbConfigured } from './lib/request-db';
+import { getAutomationDbHealth } from './lib/db-health';
 import { createAuthRateLimiter } from './middleware/rate-limit';
 
 // Import routes
@@ -112,6 +113,15 @@ app.get('/ready', (_, res) => {
     });
 });
 
+app.get('/api/health/db', async (_req, res) => {
+    const report = await getAutomationDbHealth();
+    const statusCode = report.status === 'ok' ? 200 : 503;
+    res.status(statusCode).json({
+        ...report,
+        timestamp: new Date().toISOString(),
+    });
+});
+
 // ── API Routes ──
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', authProfileRoutes);
@@ -134,6 +144,7 @@ app.get('/', (_, res) => {
         endpoints: {
             health: 'GET /health',
             ready: 'GET /ready',
+            dbHealth: 'GET /api/health/db',
             auth: {
                 register: 'POST /api/auth/register',
                 login: 'POST /api/auth/login',

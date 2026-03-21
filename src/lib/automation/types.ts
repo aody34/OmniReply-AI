@@ -55,7 +55,7 @@ export type AutomationFlowRecord = {
     name: string;
     enabled: boolean;
     priority: number;
-    Trigger?: { type: string; config?: any } | null;
+    Trigger?: { type: string; value?: any; config?: any } | null;
     Condition?: FlowConditionRecord[];
     Action?: FlowActionRecord[];
 };

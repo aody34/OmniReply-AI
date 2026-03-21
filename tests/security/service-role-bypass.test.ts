@@ -29,7 +29,7 @@ describe('Security: service-role bypass', () => {
     it('allows backend service-role writes on configuration routes', () => {
         for (const relativePath of serviceRoleRouteFiles) {
             const source = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
-            expect(source).toMatch(/from ['"]\.\.\/lib\/db['"]/);
+            expect(source).toMatch(/from ['"]\.\.\/lib\/db['"]|from ['"]\.\.\/lib\/automation\/settings['"]/);
         }
     });
 

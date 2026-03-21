@@ -104,6 +104,7 @@ Fresh setup:
 
 Incremental migration:
 - Run [`prisma/migrations/20260311_whatsapp_automation/migration.sql`](prisma/migrations/20260311_whatsapp_automation/migration.sql).
+- If production is missing `FlowTrigger` or `enableHumanOverride`, also run [`prisma/migrations/20260321_automation_schema_backfill/migration.sql`](prisma/migrations/20260321_automation_schema_backfill/migration.sql).
 
 Prisma connectivity:
 ```bash
@@ -159,6 +160,9 @@ Important runtime note:
 
 Heartbeat:
 - `POST /api/heartbeat`
+
+DB prerequisite check:
+- `GET /api/health/db`
 
 Example delayed mode:
 ```json

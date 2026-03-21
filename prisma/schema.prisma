@@ -233,6 +233,7 @@ model FlowTrigger {
   flowId     String         @unique @db.Uuid
   tenantId   String         @db.Uuid
   type       String         @default("INCOMING_MESSAGE")
+  value      Json?
   config     Json?
   createdAt  DateTime?      @default(now()) @db.Timestamptz(6)
   updatedAt  DateTime?      @default(now()) @db.Timestamptz(6)
