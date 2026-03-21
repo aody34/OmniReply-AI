@@ -71,11 +71,20 @@ async function listFlows(tenantId: string) {
 }
 
 async function replaceFlowChildren(tenantId: string, flowId: string, payload: z.infer<typeof flowPayloadSchema>) {
-    await Promise.all([
-        supabase.from('FlowTrigger').delete().eq('flowId', flowId).eq('tenantId', tenantId),
-        supabase.from('FlowCondition').delete().eq('flowId', flowId).eq('tenantId', tenantId),
-        supabase.from('FlowAction').delete().eq('flowId', flowId).eq('tenantId', tenantId),
-    ]);
+    const deleteConditionsRes = await supabase.from('FlowCondition').delete().eq('flowId', flowId).eq('tenantId', tenantId);
+    if (deleteConditionsRes.error) {
+        throw deleteConditionsRes.error;
+    }
+
+    const deleteActionsRes = await supabase.from('FlowAction').delete().eq('flowId', flowId).eq('tenantId', tenantId);
+    if (deleteActionsRes.error) {
+        throw deleteActionsRes.error;
+    }
+
+    const deleteTriggerRes = await supabase.from('FlowTrigger').delete().eq('flowId', flowId).eq('tenantId', tenantId);
+    if (deleteTriggerRes.error) {
+        throw deleteTriggerRes.error;
+    }
 
     const triggerPayload = {
         flowId,
@@ -85,14 +94,20 @@ async function replaceFlowChildren(tenantId: string, flowId: string, payload: z.
         config: payload.trigger.config || null,
         updatedAt: new Date().toISOString(),
     };
-    const triggerRes = await supabase.from('FlowTrigger').insert(triggerPayload);
-    if (triggerRes.error) {
-        throw triggerRes.error;
+    const triggerRes = await supabase
+        .from('FlowTrigger')
+        .insert(triggerPayload)
+        .select('*')
+        .single();
+    if (triggerRes.error || !triggerRes.data?.id) {
+        throw triggerRes.error || new Error('Failed to create automation trigger');
     }
+    const triggerId = triggerRes.data.id;
 
     if (payload.conditions.length) {
         const conditionRes = await supabase.from('FlowCondition').insert(payload.conditions.map((condition, index) => ({
             flowId,
+            triggerId,
             tenantId,
             type: condition.type,
             operator: condition.operator || null,
@@ -151,14 +166,18 @@ router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Respon
         assertNoTenantOverride(req.body);
         const tenantId = req.auth.tenantId;
         const payload = flowPayloadSchema.parse(req.body);
+        const normalizedPayload = {
+            ...payload,
+            trigger: payload.trigger || { type: 'INCOMING_MESSAGE' as const },
+        };
 
         const { data: flow, error } = await supabase
             .from('AutomationFlow')
             .insert({
                 tenantId,
-                name: payload.name,
-                enabled: payload.enabled,
-                priority: payload.priority,
+                name: normalizedPayload.name,
+                enabled: normalizedPayload.enabled,
+                priority: normalizedPayload.priority,
                 updatedAt: new Date().toISOString(),
             })
             .select('*')
@@ -168,7 +187,7 @@ router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Respon
             throw error || new Error('Failed to create automation flow');
         }
 
-        await replaceFlowChildren(tenantId, flow.id, payload);
+        await replaceFlowChildren(tenantId, flow.id, normalizedPayload);
         const flows = await listFlows(tenantId);
         const created = flows.find((entry) => entry.id === flow.id);
 
@@ -199,6 +218,10 @@ router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Resp
         const tenantId = req.auth.tenantId;
         const flowId = String(req.params.id);
         const payload = flowPayloadSchema.parse(req.body);
+        const normalizedPayload = {
+            ...payload,
+            trigger: payload.trigger || { type: 'INCOMING_MESSAGE' as const },
+        };
 
         const { data: existing, error: existingError } = await supabase
             .from('AutomationFlow')
@@ -217,9 +240,9 @@ router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Resp
         const { error } = await supabase
             .from('AutomationFlow')
             .update({
-                name: payload.name,
-                enabled: payload.enabled,
-                priority: payload.priority,
+                name: normalizedPayload.name,
+                enabled: normalizedPayload.enabled,
+                priority: normalizedPayload.priority,
                 updatedAt: new Date().toISOString(),
             })
             .eq('id', flowId)
@@ -229,7 +252,7 @@ router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Resp
             throw error;
         }
 
-        await replaceFlowChildren(tenantId, flowId, payload);
+        await replaceFlowChildren(tenantId, flowId, normalizedPayload);
         const flows = await listFlows(tenantId);
         const updated = flows.find((entry) => entry.id === flowId);
 

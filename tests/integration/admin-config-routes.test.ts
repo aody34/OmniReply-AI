@@ -208,7 +208,20 @@ describe('Integration: admin config routes', () => {
                 return { error: null };
             }
 
-            if (state.table === 'FlowTrigger' && state.action === 'insert' && mode === 'execute') {
+            if (state.table === 'FlowTrigger' && state.action === 'insert' && mode === 'single') {
+                return {
+                    data: {
+                        id: 'trigger-1',
+                        ...state.payload,
+                    },
+                    error: null,
+                };
+            }
+
+            if (state.table === 'FlowCondition' && state.action === 'insert' && mode === 'execute') {
+                expect(Array.isArray(state.payload)).toBe(true);
+                expect(state.payload[0].tenantId).toBe('tenant-1');
+                expect(state.payload[0].triggerId).toBe('trigger-1');
                 return { error: null };
             }
 
@@ -249,7 +262,7 @@ describe('Integration: admin config routes', () => {
                 enabled: true,
                 priority: 0,
                 trigger: { type: 'INCOMING_MESSAGE' },
-                conditions: [],
+                conditions: [{ type: 'containsText', value: ['hello'] }],
                 actions: [{ type: 'sendText', config: { text: 'We will reply soon' } }],
             });
 

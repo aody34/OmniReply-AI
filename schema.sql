@@ -141,6 +141,7 @@ CREATE INDEX IF NOT EXISTS "FlowTrigger_tenantId_idx" ON "FlowTrigger"("tenantId
 CREATE TABLE IF NOT EXISTS "FlowCondition" (
   "id" UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   "flowId" UUID NOT NULL REFERENCES "AutomationFlow"("id") ON DELETE CASCADE,
+  "triggerId" UUID NOT NULL REFERENCES "FlowTrigger"("id") ON DELETE CASCADE,
   "tenantId" UUID NOT NULL REFERENCES "Tenant"("id") ON DELETE CASCADE,
   "type" TEXT NOT NULL,
   "operator" TEXT,
@@ -150,6 +151,7 @@ CREATE TABLE IF NOT EXISTS "FlowCondition" (
   "updatedAt" TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS "FlowCondition_flow_idx" ON "FlowCondition"("flowId", "sortOrder");
+CREATE INDEX IF NOT EXISTS "FlowCondition_triggerId_idx" ON "FlowCondition"("triggerId");
 CREATE INDEX IF NOT EXISTS "FlowCondition_tenantId_idx" ON "FlowCondition"("tenantId");
 
 CREATE TABLE IF NOT EXISTS "FlowAction" (
