@@ -222,6 +222,8 @@ describe('Integration: admin config routes', () => {
                 expect(Array.isArray(state.payload)).toBe(true);
                 expect(state.payload[0].tenantId).toBe('tenant-1');
                 expect(state.payload[0].triggerId).toBe('trigger-1');
+                expect(state.payload[0].kind).toBe('containsText');
+                expect(state.payload[0].type).toBe('containsText');
                 return { error: null };
             }
 

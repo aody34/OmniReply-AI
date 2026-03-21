@@ -43,11 +43,12 @@ const emptyForm: AutomationFormState = {
 function toForm(flow: any): AutomationFormState {
     const conditions = flow.Condition || [];
     const actions = flow.Action || [];
-    const containsText = conditions.find((condition: any) => condition.type === 'containsText');
-    const languageIs = conditions.find((condition: any) => condition.type === 'languageIs');
-    const contactTag = conditions.find((condition: any) => condition.type === 'contactTag');
-    const threshold = conditions.find((condition: any) => condition.type === 'messageCountThreshold');
-    const hours = conditions.find((condition: any) => condition.type === 'businessHoursOnly');
+    const getKind = (condition: any) => condition?.kind || condition?.type;
+    const containsText = conditions.find((condition: any) => getKind(condition) === 'containsText');
+    const languageIs = conditions.find((condition: any) => getKind(condition) === 'languageIs');
+    const contactTag = conditions.find((condition: any) => getKind(condition) === 'contactTag');
+    const threshold = conditions.find((condition: any) => getKind(condition) === 'messageCountThreshold');
+    const hours = conditions.find((condition: any) => getKind(condition) === 'businessHoursOnly');
     const wait = actions.find((action: any) => action.type === 'wait');
     const addTag = actions.find((action: any) => action.type === 'addTag');
     const sendAction = actions.find((action: any) => ['callAIReply', 'sendText', 'sendTemplate'].includes(action.type));
@@ -76,19 +77,19 @@ function toPayload(form: AutomationFormState): AutomationFlowInput {
     const actions: AutomationFlowInput['actions'] = [];
 
     if (form.containsText.trim()) {
-        conditions.push({ type: 'containsText', value: form.containsText.split(',').map((entry) => entry.trim()).filter(Boolean) });
+        conditions.push({ kind: 'containsText', type: 'containsText', value: form.containsText.split(',').map((entry) => entry.trim()).filter(Boolean) });
     }
     if (form.languageIs !== 'any') {
-        conditions.push({ type: 'languageIs', value: form.languageIs });
+        conditions.push({ kind: 'languageIs', type: 'languageIs', value: form.languageIs });
     }
     if (form.contactTag.trim()) {
-        conditions.push({ type: 'contactTag', value: form.contactTag.split(',').map((entry) => entry.trim()).filter(Boolean) });
+        conditions.push({ kind: 'contactTag', type: 'contactTag', value: form.contactTag.split(',').map((entry) => entry.trim()).filter(Boolean) });
     }
     if (form.messageCountThreshold.trim()) {
-        conditions.push({ type: 'messageCountThreshold', operator: 'gte', value: Number(form.messageCountThreshold) || 0 });
+        conditions.push({ kind: 'messageCountThreshold', type: 'messageCountThreshold', operator: 'gte', value: Number(form.messageCountThreshold) || 0 });
     }
     if (form.businessHoursOnly) {
-        conditions.push({ type: 'businessHoursOnly', value: true });
+        conditions.push({ kind: 'businessHoursOnly', type: 'businessHoursOnly', value: true });
     }
 
     if (form.addTags.trim()) {

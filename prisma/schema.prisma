@@ -248,6 +248,7 @@ model FlowCondition {
   flowId     String         @db.Uuid
   triggerId  String         @db.Uuid
   tenantId   String         @db.Uuid
+  kind       String
   type       String
   operator   String?
   value      Json?

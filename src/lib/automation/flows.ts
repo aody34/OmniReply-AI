@@ -54,10 +54,11 @@ function matchesCondition(
     condition: FlowConditionRecord,
     context: FlowEvaluationContext,
 ): boolean {
+    const conditionKind = condition.kind || condition.type;
     const message = context.inboundMessage.toLowerCase();
     const leadTags = (context.lead?.tags || []).map((tag) => tag.toLowerCase());
 
-    switch (condition.type) {
+    switch (conditionKind) {
         case 'containsText': {
             const needles = toStringArray(condition.value).map((entry) => entry.toLowerCase());
             if (!needles.length) {

@@ -36,10 +36,18 @@ const flowPayloadSchema = z.object({
         config: z.any().optional(),
     }).default({ type: 'INCOMING_MESSAGE' }),
     conditions: z.array(z.object({
-        type: z.enum(flowConditionTypes),
+        kind: z.enum(flowConditionTypes).optional(),
+        type: z.enum(flowConditionTypes).optional(),
         operator: z.string().min(1).optional().nullable(),
         value: z.any().optional(),
         sortOrder: z.number().int().optional().nullable(),
+    }).transform((condition) => {
+        const kind = condition.kind ?? condition.type ?? 'containsText';
+        return {
+            ...condition,
+            kind,
+            type: kind,
+        };
     })).default([]),
     actions: z.array(z.object({
         type: z.enum(flowActionTypes),
@@ -65,7 +73,13 @@ async function listFlows(tenantId: string) {
     return (data || []).map((row: any) => ({
         ...row,
         Trigger: Array.isArray(row.Trigger) ? row.Trigger[0] || null : row.Trigger,
-        Condition: Array.isArray(row.Condition) ? row.Condition : [],
+        Condition: Array.isArray(row.Condition)
+            ? row.Condition.map((condition: any) => ({
+                ...condition,
+                kind: condition.kind || condition.type || 'containsText',
+                type: condition.kind || condition.type || 'containsText',
+            }))
+            : [],
         Action: Array.isArray(row.Action) ? row.Action : [],
     }));
 }
@@ -109,7 +123,8 @@ async function replaceFlowChildren(tenantId: string, flowId: string, payload: z.
             flowId,
             triggerId,
             tenantId,
-            type: condition.type,
+            kind: condition.kind ?? condition.type ?? 'containsText',
+            type: condition.kind ?? condition.type ?? 'containsText',
             operator: condition.operator || null,
             value: condition.value ?? null,
             sortOrder: condition.sortOrder ?? index,
@@ -197,7 +212,7 @@ router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Respon
             return sendRouteError(res, 400, 'TENANT_OVERRIDE_BLOCKED', error.message, ctx.requestId);
         }
         if (error instanceof z.ZodError) {
-            return sendRouteError(res, 400, 'AUTOMATION_CREATE_INVALID', error.issues[0]?.message || 'Invalid automation payload', ctx.requestId);
+            return sendRouteError(res, 400, 'AUTOMATION_CREATE_INVALID', error.issues[0]?.message || 'Invalid automation payload. Required fields: name, trigger.type, conditions[].kind/type, actions[].type.', ctx.requestId);
         }
         const details = getSafeErrorDetails(error, 'Failed to create automation');
         logger.error({ ...ctx, details }, 'Automation create failed');
@@ -262,7 +277,7 @@ router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Resp
             return sendRouteError(res, 400, 'TENANT_OVERRIDE_BLOCKED', error.message, ctx.requestId);
         }
         if (error instanceof z.ZodError) {
-            return sendRouteError(res, 400, 'AUTOMATION_UPDATE_INVALID', error.issues[0]?.message || 'Invalid automation payload', ctx.requestId);
+            return sendRouteError(res, 400, 'AUTOMATION_UPDATE_INVALID', error.issues[0]?.message || 'Invalid automation payload. Required fields: name, trigger.type, conditions[].kind/type, actions[].type.', ctx.requestId);
         }
         const details = getSafeErrorDetails(error, 'Failed to update automation');
         logger.error({ ...ctx, details }, 'Automation update failed');

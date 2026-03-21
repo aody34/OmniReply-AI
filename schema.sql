@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS "FlowCondition" (
   "flowId" UUID NOT NULL REFERENCES "AutomationFlow"("id") ON DELETE CASCADE,
   "triggerId" UUID NOT NULL REFERENCES "FlowTrigger"("id") ON DELETE CASCADE,
   "tenantId" UUID NOT NULL REFERENCES "Tenant"("id") ON DELETE CASCADE,
+  "kind" TEXT NOT NULL,
   "type" TEXT NOT NULL,
   "operator" TEXT,
   "value" JSONB,

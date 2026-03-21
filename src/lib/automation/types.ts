@@ -35,6 +35,7 @@ export type FlowActionType =
 
 export type FlowConditionRecord = {
     id?: string;
+    kind?: FlowConditionType;
     type: FlowConditionType;
     operator?: string | null;
     value?: any;

@@ -68,6 +68,7 @@ export type AutomationSettingsPayload = {
 };
 
 export type FlowCondition = {
+    kind?: 'containsText' | 'languageIs' | 'businessHoursOnly' | 'contactTag' | 'messageCountThreshold';
     type: 'containsText' | 'languageIs' | 'businessHoursOnly' | 'contactTag' | 'messageCountThreshold';
     operator?: string | null;
     value?: any;
