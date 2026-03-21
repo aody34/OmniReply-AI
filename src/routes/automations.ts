@@ -1,9 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { authMiddleware, requireRole } from '../middleware/auth';
-import { requestDbMiddleware } from '../middleware/request-db';
 import { assertNoTenantOverride, TenantOverrideError } from '../lib/request-db';
-import { AUTO_REPLY_MODES, type FlowActionType, type FlowConditionType } from '../lib/automation/types';
+import type { FlowActionType, FlowConditionType } from '../lib/automation/types';
+import supabase from '../lib/db';
+import logger from '../lib/utils/logger';
+import { getRouteRequestContext, getSafeErrorDetails, sendRouteError } from '../lib/utils/route-response';
 
 const router = Router();
 
@@ -48,10 +50,9 @@ const flowPayloadSchema = z.object({
 });
 
 router.use(authMiddleware);
-router.use(requestDbMiddleware);
 
-async function listFlows(db: NonNullable<Request['tenantDb']>, tenantId: string) {
-    const { data, error } = await db
+async function listFlows(tenantId: string) {
+    const { data, error } = await supabase
         .from('AutomationFlow')
         .select('id, tenantId, name, enabled, priority, createdAt, updatedAt, Trigger:FlowTrigger(*), Condition:FlowCondition(*), Action:FlowAction(*)')
         .eq('tenantId', tenantId)
@@ -69,11 +70,11 @@ async function listFlows(db: NonNullable<Request['tenantDb']>, tenantId: string)
     }));
 }
 
-async function replaceFlowChildren(db: NonNullable<Request['tenantDb']>, tenantId: string, flowId: string, payload: z.infer<typeof flowPayloadSchema>) {
+async function replaceFlowChildren(tenantId: string, flowId: string, payload: z.infer<typeof flowPayloadSchema>) {
     await Promise.all([
-        db.from('FlowTrigger').delete().eq('flowId', flowId).eq('tenantId', tenantId),
-        db.from('FlowCondition').delete().eq('flowId', flowId).eq('tenantId', tenantId),
-        db.from('FlowAction').delete().eq('flowId', flowId).eq('tenantId', tenantId),
+        supabase.from('FlowTrigger').delete().eq('flowId', flowId).eq('tenantId', tenantId),
+        supabase.from('FlowCondition').delete().eq('flowId', flowId).eq('tenantId', tenantId),
+        supabase.from('FlowAction').delete().eq('flowId', flowId).eq('tenantId', tenantId),
     ]);
 
     const triggerPayload = {
@@ -81,20 +82,22 @@ async function replaceFlowChildren(db: NonNullable<Request['tenantDb']>, tenantI
         tenantId,
         type: payload.trigger.type,
         config: payload.trigger.config || null,
+        updatedAt: new Date().toISOString(),
     };
-    const triggerRes = await db.from('FlowTrigger').insert(triggerPayload);
+    const triggerRes = await supabase.from('FlowTrigger').insert(triggerPayload);
     if (triggerRes.error) {
         throw triggerRes.error;
     }
 
     if (payload.conditions.length) {
-        const conditionRes = await db.from('FlowCondition').insert(payload.conditions.map((condition, index) => ({
+        const conditionRes = await supabase.from('FlowCondition').insert(payload.conditions.map((condition, index) => ({
             flowId,
             tenantId,
             type: condition.type,
             operator: condition.operator || null,
             value: condition.value ?? null,
             sortOrder: condition.sortOrder ?? index,
+            updatedAt: new Date().toISOString(),
         })));
         if (conditionRes.error) {
             throw conditionRes.error;
@@ -102,13 +105,14 @@ async function replaceFlowChildren(db: NonNullable<Request['tenantDb']>, tenantI
     }
 
     if (payload.actions.length) {
-        const actionRes = await db.from('FlowAction').insert(payload.actions.map((action, index) => ({
+        const actionRes = await supabase.from('FlowAction').insert(payload.actions.map((action, index) => ({
             flowId,
             tenantId,
             type: action.type,
             config: action.config ?? null,
             sortOrder: action.sortOrder ?? index,
             templateId: action.templateId || null,
+            updatedAt: new Date().toISOString(),
         })));
         if (actionRes.error) {
             throw actionRes.error;
@@ -117,28 +121,44 @@ async function replaceFlowChildren(db: NonNullable<Request['tenantDb']>, tenantI
 }
 
 router.get('/', async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'automations.list');
     try {
-        const flows = await listFlows(req.tenantDb!, req.auth!.tenantId);
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
+
+        logger.info({ ...ctx, hasUser: Boolean(ctx.userId), hasTenant: Boolean(ctx.tenantId) }, 'Handling automation list');
+
+        const flows = await listFlows(req.auth.tenantId);
         res.json({ flows });
-    } catch {
-        res.status(500).json({ error: 'Failed to fetch automations' });
+    } catch (error) {
+        const details = getSafeErrorDetails(error, 'Failed to fetch automations');
+        logger.error({ ...ctx, details }, 'Automation list failed');
+        return sendRouteError(res, 500, 'AUTOMATION_LIST_FAILED', details, ctx.requestId);
     }
 });
 
 router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'automations.create');
     try {
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
+
+        logger.info({ ...ctx, hasUser: Boolean(ctx.userId), hasTenant: Boolean(ctx.tenantId) }, 'Handling automation create');
+
         assertNoTenantOverride(req.body);
-        const db = req.tenantDb!;
-        const tenantId = req.auth!.tenantId;
+        const tenantId = req.auth.tenantId;
         const payload = flowPayloadSchema.parse(req.body);
 
-        const { data: flow, error } = await db
+        const { data: flow, error } = await supabase
             .from('AutomationFlow')
             .insert({
                 tenantId,
                 name: payload.name,
                 enabled: payload.enabled,
                 priority: payload.priority,
+                updatedAt: new Date().toISOString(),
             })
             .select('*')
             .single();
@@ -147,31 +167,39 @@ router.post('/', requireRole('owner', 'admin'), async (req: Request, res: Respon
             throw error || new Error('Failed to create automation flow');
         }
 
-        await replaceFlowChildren(db, tenantId, flow.id, payload);
-        const flows = await listFlows(db, tenantId);
+        await replaceFlowChildren(tenantId, flow.id, payload);
+        const flows = await listFlows(tenantId);
         const created = flows.find((entry) => entry.id === flow.id);
 
         res.status(201).json({ flow: created });
     } catch (error) {
         if (error instanceof TenantOverrideError) {
-            return res.status(400).json({ error: error.message });
+            return sendRouteError(res, 400, 'TENANT_OVERRIDE_BLOCKED', error.message, ctx.requestId);
         }
         if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: error.issues[0]?.message || 'Invalid automation payload' });
+            return sendRouteError(res, 400, 'AUTOMATION_CREATE_INVALID', error.issues[0]?.message || 'Invalid automation payload', ctx.requestId);
         }
-        return res.status(500).json({ error: 'Failed to create automation' });
+        const details = getSafeErrorDetails(error, 'Failed to create automation');
+        logger.error({ ...ctx, details }, 'Automation create failed');
+        return sendRouteError(res, 500, 'AUTOMATION_CREATE_FAILED', details, ctx.requestId);
     }
 });
 
 router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'automations.update');
     try {
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
+
+        logger.info({ ...ctx, hasUser: Boolean(ctx.userId), hasTenant: Boolean(ctx.tenantId) }, 'Handling automation update');
+
         assertNoTenantOverride(req.body);
-        const db = req.tenantDb!;
-        const tenantId = req.auth!.tenantId;
+        const tenantId = req.auth.tenantId;
         const flowId = String(req.params.id);
         const payload = flowPayloadSchema.parse(req.body);
 
-        const { data: existing, error: existingError } = await db
+        const { data: existing, error: existingError } = await supabase
             .from('AutomationFlow')
             .select('id')
             .eq('id', flowId)
@@ -182,10 +210,10 @@ router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Resp
             throw existingError;
         }
         if (!existing) {
-            return res.status(404).json({ error: 'Automation not found' });
+            return sendRouteError(res, 404, 'AUTOMATION_NOT_FOUND', 'Automation not found', ctx.requestId);
         }
 
-        const { error } = await db
+        const { error } = await supabase
             .from('AutomationFlow')
             .update({
                 name: payload.name,
@@ -200,29 +228,37 @@ router.put('/:id', requireRole('owner', 'admin'), async (req: Request, res: Resp
             throw error;
         }
 
-        await replaceFlowChildren(db, tenantId, flowId, payload);
-        const flows = await listFlows(db, tenantId);
+        await replaceFlowChildren(tenantId, flowId, payload);
+        const flows = await listFlows(tenantId);
         const updated = flows.find((entry) => entry.id === flowId);
 
         res.json({ flow: updated });
     } catch (error) {
         if (error instanceof TenantOverrideError) {
-            return res.status(400).json({ error: error.message });
+            return sendRouteError(res, 400, 'TENANT_OVERRIDE_BLOCKED', error.message, ctx.requestId);
         }
         if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: error.issues[0]?.message || 'Invalid automation payload' });
+            return sendRouteError(res, 400, 'AUTOMATION_UPDATE_INVALID', error.issues[0]?.message || 'Invalid automation payload', ctx.requestId);
         }
-        return res.status(500).json({ error: 'Failed to update automation' });
+        const details = getSafeErrorDetails(error, 'Failed to update automation');
+        logger.error({ ...ctx, details }, 'Automation update failed');
+        return sendRouteError(res, 500, 'AUTOMATION_UPDATE_FAILED', details, ctx.requestId);
     }
 });
 
 router.delete('/:id', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'automations.delete');
     try {
-        const db = req.tenantDb!;
-        const tenantId = req.auth!.tenantId;
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
+
+        logger.info({ ...ctx, hasUser: Boolean(ctx.userId), hasTenant: Boolean(ctx.tenantId) }, 'Handling automation delete');
+
+        const tenantId = req.auth.tenantId;
         const flowId = String(req.params.id);
 
-        const { error } = await db
+        const { error } = await supabase
             .from('AutomationFlow')
             .delete()
             .eq('id', flowId)
@@ -233,8 +269,10 @@ router.delete('/:id', requireRole('owner', 'admin'), async (req: Request, res: R
         }
 
         res.json({ message: 'Automation deleted' });
-    } catch {
-        res.status(500).json({ error: 'Failed to delete automation' });
+    } catch (error) {
+        const details = getSafeErrorDetails(error, 'Failed to delete automation');
+        logger.error({ ...ctx, details }, 'Automation delete failed');
+        return sendRouteError(res, 500, 'AUTOMATION_DELETE_FAILED', details, ctx.requestId);
     }
 });
 

@@ -21,6 +21,7 @@ Required backend variables:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` as an alternative alias if your Railway project uses that name instead of `SUPABASE_SERVICE_KEY`
 - `SUPABASE_JWT_SECRET`
 - `JWT_SECRET`
 - `GEMINI_API_KEY`
@@ -51,6 +52,7 @@ Set these in Railway Variables:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` if you prefer that env name instead of `SUPABASE_SERVICE_KEY`
 - `SUPABASE_JWT_SECRET`
 - `JWT_SECRET`
 - `GEMINI_API_KEY`
@@ -150,6 +152,11 @@ Templates CRUD:
 - `PUT /api/templates/:id`
 - `DELETE /api/templates/:id`
 
+Important runtime note:
+- `POST /api/templates`, `POST /api/automations`, `PUT /api/settings`, and `PUT /api/tenant/settings` write through the backend service-role client.
+- If these fail in production, verify Railway has `SUPABASE_SERVICE_KEY` or `SUPABASE_SERVICE_ROLE_KEY` set.
+- Backend failures return JSON with `error`, `details`, and `requestId`; the frontend now surfaces those values directly.
+
 Heartbeat:
 - `POST /api/heartbeat`
 
@@ -176,6 +183,11 @@ Reply modes:
 Run all tests:
 ```bash
 npm test
+```
+
+Focused integration test for settings/templates/automations:
+```bash
+npx vitest run tests/integration/admin-config-routes.test.ts --reporter=verbose
 ```
 
 Run automation tests only:

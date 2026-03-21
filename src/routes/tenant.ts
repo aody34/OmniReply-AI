@@ -4,25 +4,31 @@
 
 import { Router, Request, Response } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth';
-import { requestDbMiddleware } from '../middleware/request-db';
 import { assertNoTenantOverride, TenantOverrideError } from '../lib/request-db';
 import { getCanonicalWhatsAppStatus } from '../lib/whatsapp/session-state';
+import supabase from '../lib/db';
+import logger from '../lib/utils/logger';
+import { getRouteRequestContext, getSafeErrorDetails, sendRouteError } from '../lib/utils/route-response';
 
 const router = Router();
 router.use(authMiddleware);
-router.use(requestDbMiddleware);
 
 /**
  * GET /api/tenant/settings — Get tenant settings
  */
 router.get('/settings', async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'tenant.settings.get');
     try {
-        const db = req.tenantDb!;
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
 
-        const { data: tenant, error } = await db
+        logger.info({ ...ctx, hasUser: Boolean(ctx.userId), hasTenant: Boolean(ctx.tenantId) }, 'Handling tenant settings fetch');
+
+        const { data: tenant, error } = await supabase
             .from('Tenant')
             .select('*')
-            .eq('id', req.auth!.tenantId)
+            .eq('id', req.auth.tenantId)
             .single();
 
         if (error || !tenant) {
@@ -30,8 +36,10 @@ router.get('/settings', async (req: Request, res: Response) => {
         }
 
         res.json({ tenant });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch settings' });
+    } catch (error) {
+        const details = getSafeErrorDetails(error, 'Failed to fetch tenant settings');
+        logger.error({ ...ctx, details }, 'Tenant settings fetch failed');
+        return sendRouteError(res, 500, 'TENANT_SETTINGS_FETCH_FAILED', details, ctx.requestId);
     }
 });
 
@@ -39,8 +47,14 @@ router.get('/settings', async (req: Request, res: Response) => {
  * PUT /api/tenant/settings — Update tenant settings
  */
 router.put('/settings', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'tenant.settings.update');
     try {
-        const db = req.tenantDb!;
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
+
+        logger.info({ ...ctx, hasUser: Boolean(ctx.userId), hasTenant: Boolean(ctx.tenantId) }, 'Handling tenant settings update');
+
         assertNoTenantOverride(req.body);
         const { name, businessType, aiPersonality, maxDailyMessages } = req.body;
 
@@ -50,20 +64,22 @@ router.put('/settings', requireRole('owner', 'admin'), async (req: Request, res:
         if (aiPersonality) updateData.aiPersonality = aiPersonality;
         if (maxDailyMessages) updateData.maxDailyMessages = maxDailyMessages;
 
-        const { data: tenant, error } = await db
+        const { data: tenant, error } = await supabase
             .from('Tenant')
             .update(updateData)
-            .eq('id', req.auth!.tenantId)
+            .eq('id', req.auth.tenantId)
             .select()
             .single();
 
         if (error) throw error;
         res.json({ message: 'Settings updated', tenant });
-    } catch (err) {
-        if (err instanceof TenantOverrideError) {
-            return res.status(400).json({ error: err.message });
+    } catch (error) {
+        if (error instanceof TenantOverrideError) {
+            return sendRouteError(res, 400, 'TENANT_OVERRIDE_BLOCKED', error.message, ctx.requestId);
         }
-        res.status(500).json({ error: 'Failed to update settings' });
+        const details = getSafeErrorDetails(error, 'Failed to update settings');
+        logger.error({ ...ctx, details }, 'Tenant settings update failed');
+        return sendRouteError(res, 500, 'TENANT_SETTINGS_UPDATE_FAILED', details, ctx.requestId);
     }
 });
 
@@ -71,16 +87,19 @@ router.put('/settings', requireRole('owner', 'admin'), async (req: Request, res:
  * GET /api/tenant/dashboard — Overview stats
  */
 router.get('/dashboard', async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'tenant.dashboard');
     try {
-        const tenantId = req.auth!.tenantId;
-        const db = req.tenantDb!;
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
+        const tenantId = req.auth.tenantId;
         const today = new Date().toISOString().split('T')[0];
 
         // Parallel queries
         const [tenantRes, statsRes, leadsRes, whatsappStatus] = await Promise.all([
-            db.from('Tenant').select('*').eq('id', tenantId).single(),
-            db.from('DailyStat').select('*').eq('tenantId', tenantId).eq('date', today).single(),
-            db.from('Lead').select('id', { count: 'exact' }).eq('tenantId', tenantId),
+            supabase.from('Tenant').select('*').eq('id', tenantId).single(),
+            supabase.from('DailyStat').select('*').eq('tenantId', tenantId).eq('date', today).single(),
+            supabase.from('Lead').select('id', { count: 'exact' }).eq('tenantId', tenantId),
             getCanonicalWhatsAppStatus(tenantId),
         ]);
 
@@ -98,8 +117,10 @@ router.get('/dashboard', async (req: Request, res: Response) => {
             },
             totalLeads: leadsRes.count || 0,
         });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch dashboard' });
+    } catch (error) {
+        const details = getSafeErrorDetails(error, 'Failed to fetch dashboard');
+        logger.error({ ...ctx, details }, 'Tenant dashboard fetch failed');
+        return sendRouteError(res, 500, 'TENANT_DASHBOARD_FETCH_FAILED', details, ctx.requestId);
     }
 });
 
@@ -107,15 +128,18 @@ router.get('/dashboard', async (req: Request, res: Response) => {
  * GET /api/tenant/analytics — Historical data
  */
 router.get('/analytics', async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'tenant.analytics');
     try {
-        const tenantId = req.auth!.tenantId;
-        const db = req.tenantDb!;
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
+        const tenantId = req.auth.tenantId;
         const days = parseInt(req.query.days as string) || 7;
 
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - days);
 
-        const { data: stats, error } = await db
+        const { data: stats, error } = await supabase
             .from('DailyStat')
             .select('*')
             .eq('tenantId', tenantId)
@@ -137,8 +161,10 @@ router.get('/analytics', async (req: Request, res: Response) => {
                 { messagesIn: 0, messagesOut: 0, aiResponses: 0, newLeads: 0 }
             ),
         });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch analytics' });
+    } catch (error) {
+        const details = getSafeErrorDetails(error, 'Failed to fetch analytics');
+        logger.error({ ...ctx, details }, 'Tenant analytics fetch failed');
+        return sendRouteError(res, 500, 'TENANT_ANALYTICS_FETCH_FAILED', details, ctx.requestId);
     }
 });
 

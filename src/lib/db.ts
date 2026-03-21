@@ -11,12 +11,12 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const DB_REQUEST_TIMEOUT_MS = parseInt(process.env.DB_REQUEST_TIMEOUT_MS || '10000', 10);
 const isDbConfigured = Boolean(supabaseUrl && supabaseKey);
 
 if (!isDbConfigured) {
-    console.warn('⚠️  Missing SUPABASE_URL or SUPABASE_SERVICE_KEY — database features will not work');
+    console.warn('⚠️  Missing SUPABASE_URL or SUPABASE_SERVICE_KEY/SUPABASE_SERVICE_ROLE_KEY — database features will not work');
 }
 
 const timedFetch: typeof fetch = async (input, init = {}) => {

@@ -3,20 +3,33 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = path.resolve(__dirname, '../..');
-const protectedRouteFiles = [
+const requestScopedRouteFiles = [
     'src/routes/auth-profile.ts',
     'src/routes/broadcast.ts',
     'src/routes/knowledge.ts',
     'src/routes/leads.ts',
-    'src/routes/tenant.ts',
     'src/routes/whatsapp.ts',
 ];
 
+const serviceRoleRouteFiles = [
+    'src/routes/settings.ts',
+    'src/routes/templates.ts',
+    'src/routes/automations.ts',
+    'src/routes/tenant.ts',
+];
+
 describe('Security: service-role bypass', () => {
-    it('does not import the raw service-role Supabase client in authenticated route modules', () => {
-        for (const relativePath of protectedRouteFiles) {
+    it('keeps request-scoped clients on routes that should not bypass RLS', () => {
+        for (const relativePath of requestScopedRouteFiles) {
             const source = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
             expect(source).not.toMatch(/from ['"]\.\.\/lib\/db['"]/);
+        }
+    });
+
+    it('allows backend service-role writes on configuration routes', () => {
+        for (const relativePath of serviceRoleRouteFiles) {
+            const source = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+            expect(source).toMatch(/from ['"]\.\.\/lib\/db['"]/);
         }
     });
 

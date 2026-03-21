@@ -14,6 +14,28 @@ function normalizeApiBase(raw: string | undefined): string {
 
 const API_BASE = normalizeApiBase(process.env.NEXT_PUBLIC_API_URL);
 
+export class ApiError extends Error {
+    status: number;
+    code: string | null;
+    details: string | null;
+    requestId: string | null;
+
+    constructor(params: { status: number; code?: string | null; details?: string | null; requestId?: string | null; fallback?: string }) {
+        const { status, code = null, details = null, requestId = null, fallback = 'Request failed' } = params;
+        const parts = [`${status}`];
+        if (code) parts.push(code);
+        const head = parts.join(' ');
+        const body = details || fallback;
+        const requestSuffix = requestId ? ` [request ${requestId}]` : '';
+        super(`${head}: ${body}${requestSuffix}`);
+        this.name = 'ApiError';
+        this.status = status;
+        this.code = code;
+        this.details = details;
+        this.requestId = requestId;
+    }
+}
+
 export type WhatsAppState = 'DISCONNECTED' | 'QR' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 
 export type WhatsAppStatusPayload = {
@@ -116,16 +138,29 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
 
     if (!res.ok) {
-        const errorMessage =
-            (typeof data?.error === 'string' && data.error) ||
+        const errorCode = typeof data?.error === 'string' ? data.error : null;
+        const errorDetails =
+            (typeof data?.details === 'string' && data.details) ||
             (typeof data?.message === 'string' && data.message) ||
-            '';
+            null;
+        const requestId = typeof data?.requestId === 'string' ? data.requestId : null;
 
         if (res.status === 502) {
-            throw new Error(errorMessage || 'Backend is unreachable (502). Check Railway deployment and service health.');
+            throw new ApiError({
+                status: res.status,
+                code: errorCode,
+                details: errorDetails || 'Backend is unreachable (502). Check Railway deployment and service health.',
+                requestId,
+            });
         }
 
-        throw new Error(errorMessage || `Request failed (${res.status})`);
+        throw new ApiError({
+            status: res.status,
+            code: errorCode,
+            details: errorDetails,
+            requestId,
+            fallback: 'Request failed',
+        });
     }
 
     return data as T;

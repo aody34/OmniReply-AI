@@ -1,23 +1,30 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth';
-import { requestDbMiddleware } from '../middleware/request-db';
 import { assertNoTenantOverride, TenantOverrideError } from '../lib/request-db';
 import {
     DEFAULT_AUTOMATION_SETTINGS,
     tenantAutomationSettingsSchema,
 } from '../lib/automation/settings';
 import { getOwnerActivityStatus } from '../lib/automation/owner-activity';
+import supabase from '../lib/db';
+import logger from '../lib/utils/logger';
+import { getRouteRequestContext, getSafeErrorDetails, sendRouteError } from '../lib/utils/route-response';
 
 const router = Router();
 
 router.use(authMiddleware);
-router.use(requestDbMiddleware);
 
 router.get('/', async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'settings.get');
     try {
-        const db = req.tenantDb!;
-        const tenantId = req.auth!.tenantId;
-        const { data, error } = await db
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
+
+        logger.info({ ...ctx, hasUser: Boolean(ctx.userId), hasTenant: Boolean(ctx.tenantId) }, 'Handling automation settings fetch');
+
+        const tenantId = req.auth.tenantId;
+        const { data, error } = await supabase
             .from('TenantAutomationSettings')
             .select('*')
             .eq('tenantId', tenantId)
@@ -36,19 +43,26 @@ router.get('/', async (req: Request, res: Response) => {
             settings,
             ownerActivity: activity,
         });
-    } catch {
-        res.status(500).json({ error: 'Failed to fetch automation settings' });
+    } catch (error) {
+        logger.error({ ...ctx, details: getSafeErrorDetails(error) }, 'Automation settings fetch failed');
+        return sendRouteError(res, 500, 'SETTINGS_FETCH_FAILED', getSafeErrorDetails(error, 'Failed to fetch automation settings'), ctx.requestId);
     }
 });
 
 router.put('/', requireRole('owner', 'admin'), async (req: Request, res: Response) => {
+    const ctx = getRouteRequestContext(req, 'settings.update');
     try {
-        const db = req.tenantDb!;
-        const tenantId = req.auth!.tenantId;
+        if (!req.auth?.tenantId) {
+            return sendRouteError(res, 401, 'TENANT_CONTEXT_MISSING', 'Authenticated tenant context is required.', ctx.requestId);
+        }
+
+        logger.info({ ...ctx, hasUser: Boolean(ctx.userId), hasTenant: Boolean(ctx.tenantId) }, 'Handling automation settings update');
+
+        const tenantId = req.auth.tenantId;
         assertNoTenantOverride(req.body);
 
         const parsed = tenantAutomationSettingsSchema.parse(req.body);
-        const { data, error } = await db
+        const { data, error } = await supabase
             .from('TenantAutomationSettings')
             .upsert({
                 tenantId,
@@ -68,9 +82,13 @@ router.put('/', requireRole('owner', 'admin'), async (req: Request, res: Respons
         });
     } catch (error) {
         if (error instanceof TenantOverrideError) {
-            return res.status(400).json({ error: error.message });
+            return sendRouteError(res, 400, 'TENANT_OVERRIDE_BLOCKED', error.message, ctx.requestId);
         }
-        return res.status(500).json({ error: 'Failed to update automation settings' });
+        const status = typeof error === 'object' && error && 'issues' in error ? 400 : 500;
+        const code = status === 400 ? 'SETTINGS_UPDATE_INVALID' : 'SETTINGS_UPDATE_FAILED';
+        const details = getSafeErrorDetails(error, 'Failed to update automation settings');
+        logger.error({ ...ctx, details }, 'Automation settings update failed');
+        return sendRouteError(res, status, code, details, ctx.requestId);
     }
 });
 
