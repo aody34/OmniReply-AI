@@ -18,6 +18,7 @@ Copy `.env.example` to `.env` and set:
 
 Required backend variables:
 - `DATABASE_URL`
+- `DIRECT_URL` optional, preferred by Prisma migrations when present
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_KEY`
@@ -43,12 +44,14 @@ Frontend variables:
 
 Notes:
 - `DATABASE_URL` must start with `postgresql://` or `postgres://`.
+- For Railway production, use the Supabase Direct connection URI and include `?sslmode=require`.
 - Do not put backend secrets into Vercel frontend env vars.
 - Do not set `PORT` manually on Railway.
 
 ### Railway (backend)
 Set these in Railway Variables:
 - `DATABASE_URL`
+- `DIRECT_URL` optional, but recommended if you want Prisma migrations to use a dedicated direct host
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_KEY`
@@ -111,6 +114,10 @@ Prisma connectivity:
 npm run db:check
 npm run db:pull
 ```
+
+Prisma deploy behavior:
+- Railway boot now runs `npm start`, which runs `prisma migrate deploy` once before starting the API.
+- If migrations fail with `P1001`, the process exits clearly and logs the redacted host used for the migration attempt.
 
 ## Row Level Security
 
@@ -213,3 +220,8 @@ Build frontend:
 ```bash
 npm --prefix frontend run build
 ```
+Database URI guidance for Railway:
+- `DATABASE_URL` should use the Supabase Direct connection host, for example:
+  `postgresql://USER:PASSWORD@db.<project-ref>.supabase.co:5432/postgres?sslmode=require`
+- If you keep a different runtime URL, set `DIRECT_URL` to the direct connection URI above.
+- Prisma migrations now prefer `DIRECT_URL` when present.
