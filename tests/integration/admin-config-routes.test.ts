@@ -224,6 +224,7 @@ describe('Integration: admin config routes', () => {
                 expect(state.payload[0].triggerId).toBe('trigger-1');
                 expect(state.payload[0].kind).toBe('containsText');
                 expect(state.payload[0].type).toBe('containsText');
+                expect(state.payload[0].operator).toBe('contains');
                 return { error: null };
             }
 
@@ -271,5 +272,90 @@ describe('Integration: admin config routes', () => {
         expect(res.status).toBe(201);
         expect(res.body.flow.id).toBe('flow-1');
         expect(res.body.flow.tenantId).toBe('tenant-1');
+    });
+
+    it('creates an automation flow with zero conditions without inserting FlowCondition rows', async () => {
+        let flowConditionInserted = false;
+
+        const dbMock = createSupabaseMock((state, mode) => {
+            if (state.table === 'AutomationFlow' && state.action === 'insert' && mode === 'single') {
+                return {
+                    data: {
+                        id: 'flow-2',
+                        ...state.payload,
+                    },
+                    error: null,
+                };
+            }
+
+            if (state.table === 'FlowTrigger' && state.action === 'delete' && mode === 'execute') {
+                return { error: null };
+            }
+
+            if (state.table === 'FlowCondition' && state.action === 'delete' && mode === 'execute') {
+                return { error: null };
+            }
+
+            if (state.table === 'FlowAction' && state.action === 'delete' && mode === 'execute') {
+                return { error: null };
+            }
+
+            if (state.table === 'FlowTrigger' && state.action === 'insert' && mode === 'single') {
+                return {
+                    data: {
+                        id: 'trigger-2',
+                        ...state.payload,
+                    },
+                    error: null,
+                };
+            }
+
+            if (state.table === 'FlowCondition' && state.action === 'insert' && mode === 'execute') {
+                flowConditionInserted = true;
+                return { error: null };
+            }
+
+            if (state.table === 'FlowAction' && state.action === 'insert' && mode === 'execute') {
+                return { error: null };
+            }
+
+            if (state.table === 'AutomationFlow' && state.action === 'select' && mode === 'execute') {
+                return {
+                    data: [{
+                        id: 'flow-2',
+                        tenantId: 'tenant-1',
+                        name: 'No Conditions',
+                        enabled: true,
+                        priority: 1,
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
+                        Trigger: { type: 'INCOMING_MESSAGE' },
+                        Condition: [],
+                        Action: [{ type: 'sendText', config: { text: 'We will reply soon' } }],
+                    }],
+                    error: null,
+                };
+            }
+
+            throw new Error(`Unexpected query ${state.table}:${state.action}:${mode}`);
+        });
+
+        const route = await loadRoute('../../src/routes/automations', dbMock);
+        const app = buildApp(route, '/api/automations');
+        const res = await request(app)
+            .post('/api/automations')
+            .set('Authorization', `Bearer ${signTestToken()}`)
+            .send({
+                name: 'No Conditions',
+                enabled: true,
+                priority: 1,
+                trigger: { type: 'INCOMING_MESSAGE' },
+                conditions: [],
+                actions: [{ type: 'sendText', config: { text: 'We will reply soon' } }],
+            });
+
+        expect(res.status).toBe(201);
+        expect(flowConditionInserted).toBe(false);
+        expect(res.body.flow.id).toBe('flow-2');
     });
 });

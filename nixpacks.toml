@@ -5,4 +5,4 @@ cmds = ["npm ci --include=dev"]
 cmds = ["npm run build"]
 
 [start]
-cmd = "node dist/server.js"
+cmd = "npm start"

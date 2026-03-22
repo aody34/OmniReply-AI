@@ -77,19 +77,19 @@ function toPayload(form: AutomationFormState): AutomationFlowInput {
     const actions: AutomationFlowInput['actions'] = [];
 
     if (form.containsText.trim()) {
-        conditions.push({ kind: 'containsText', type: 'containsText', value: form.containsText.split(',').map((entry) => entry.trim()).filter(Boolean) });
+        conditions.push({ kind: 'containsText', type: 'containsText', operator: 'contains', value: form.containsText.split(',').map((entry) => entry.trim()).filter(Boolean) });
     }
     if (form.languageIs !== 'any') {
-        conditions.push({ kind: 'languageIs', type: 'languageIs', value: form.languageIs });
+        conditions.push({ kind: 'languageIs', type: 'languageIs', operator: 'eq', value: form.languageIs });
     }
     if (form.contactTag.trim()) {
-        conditions.push({ kind: 'contactTag', type: 'contactTag', value: form.contactTag.split(',').map((entry) => entry.trim()).filter(Boolean) });
+        conditions.push({ kind: 'contactTag', type: 'contactTag', operator: 'contains', value: form.contactTag.split(',').map((entry) => entry.trim()).filter(Boolean) });
     }
     if (form.messageCountThreshold.trim()) {
         conditions.push({ kind: 'messageCountThreshold', type: 'messageCountThreshold', operator: 'gte', value: Number(form.messageCountThreshold) || 0 });
     }
     if (form.businessHoursOnly) {
-        conditions.push({ kind: 'businessHoursOnly', type: 'businessHoursOnly', value: true });
+        conditions.push({ kind: 'businessHoursOnly', type: 'businessHoursOnly', operator: 'eq', value: true });
     }
 
     if (form.addTags.trim()) {

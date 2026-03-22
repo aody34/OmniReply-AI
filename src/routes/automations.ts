@@ -27,6 +27,58 @@ const flowActionTypes = [
     'wait',
 ] as const satisfies readonly FlowActionType[];
 
+const conditionOperatorDefaults: Record<FlowConditionType, string> = {
+    containsText: 'contains',
+    languageIs: 'eq',
+    businessHoursOnly: 'eq',
+    contactTag: 'contains',
+    messageCountThreshold: 'gte',
+};
+
+function conditionRequiresValue(kind: FlowConditionType): boolean {
+    return kind !== 'businessHoursOnly';
+}
+
+function hasConditionValue(value: unknown): boolean {
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'string') return value.trim().length > 0;
+    return value !== null && value !== undefined;
+}
+
+const flowConditionSchema = z.object({
+    kind: z.enum(flowConditionTypes).optional(),
+    type: z.enum(flowConditionTypes).optional(),
+    operator: z.string().min(1).optional().nullable(),
+    value: z.any().optional(),
+    sortOrder: z.number().int().optional().nullable(),
+}).transform((condition) => {
+    const kind = condition.kind ?? condition.type ?? 'containsText';
+    const operator = condition.operator?.trim() || conditionOperatorDefaults[kind];
+    const value = kind === 'businessHoursOnly' ? (condition.value ?? true) : condition.value;
+
+    return {
+        ...condition,
+        kind,
+        type: kind,
+        operator,
+        value,
+    };
+}).superRefine((condition, ctx) => {
+    if (!condition.operator) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Condition operator is required for ${condition.kind}`,
+        });
+    }
+
+    if (conditionRequiresValue(condition.kind) && !hasConditionValue(condition.value)) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Condition value is required for ${condition.kind}`,
+        });
+    }
+});
+
 const flowPayloadSchema = z.object({
     name: z.string().min(1).max(120),
     enabled: z.boolean().default(true),
@@ -35,20 +87,7 @@ const flowPayloadSchema = z.object({
         type: z.literal('INCOMING_MESSAGE').default('INCOMING_MESSAGE'),
         config: z.any().optional(),
     }).default({ type: 'INCOMING_MESSAGE' }),
-    conditions: z.array(z.object({
-        kind: z.enum(flowConditionTypes).optional(),
-        type: z.enum(flowConditionTypes).optional(),
-        operator: z.string().min(1).optional().nullable(),
-        value: z.any().optional(),
-        sortOrder: z.number().int().optional().nullable(),
-    }).transform((condition) => {
-        const kind = condition.kind ?? condition.type ?? 'containsText';
-        return {
-            ...condition,
-            kind,
-            type: kind,
-        };
-    })).default([]),
+    conditions: z.array(flowConditionSchema).default([]),
     actions: z.array(z.object({
         type: z.enum(flowActionTypes),
         config: z.any().optional(),
@@ -74,11 +113,15 @@ async function listFlows(tenantId: string) {
         ...row,
         Trigger: Array.isArray(row.Trigger) ? row.Trigger[0] || null : row.Trigger,
         Condition: Array.isArray(row.Condition)
-            ? row.Condition.map((condition: any) => ({
-                ...condition,
-                kind: condition.kind || condition.type || 'containsText',
-                type: condition.kind || condition.type || 'containsText',
-            }))
+            ? row.Condition.map((condition: any) => {
+                const kind = (condition.kind || condition.type || 'containsText') as FlowConditionType;
+                return {
+                    ...condition,
+                    kind,
+                    type: kind,
+                    operator: condition.operator || conditionOperatorDefaults[kind],
+                };
+            })
             : [],
         Action: Array.isArray(row.Action) ? row.Action : [],
     }));
@@ -125,7 +168,7 @@ async function replaceFlowChildren(tenantId: string, flowId: string, payload: z.
             tenantId,
             kind: condition.kind ?? condition.type ?? 'containsText',
             type: condition.kind ?? condition.type ?? 'containsText',
-            operator: condition.operator || null,
+            operator: condition.operator || conditionOperatorDefaults[condition.kind ?? condition.type ?? 'containsText'],
             value: condition.value ?? null,
             sortOrder: condition.sortOrder ?? index,
             updatedAt: new Date().toISOString(),
